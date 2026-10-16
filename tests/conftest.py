@@ -5,6 +5,16 @@ import numpy as np
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def no_ser_model(monkeypatch):
+    """Keep the 1.3 GB speech-emotion model out of tests; the pipeline then runs without it."""
+    from analyzer import ser
+
+    def disabled():
+        raise RuntimeError("the SER model is disabled in tests")
+    monkeypatch.setattr(ser, "_load", disabled)
+
+
 def write_wav(path: Path, seconds: float = 1.0, sr: int = 8000, channels: int = 1) -> Path:
     t = np.arange(int(seconds * sr)) / sr
     tone = (0.1 * np.sin(2 * np.pi * 440 * t) * 32767).astype("<i2")

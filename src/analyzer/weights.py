@@ -15,7 +15,7 @@ from huggingface_hub import hf_hub_download
 class Weights:
     repo: str
     revision: str
-    files: tuple[str, ...]  # the first one is the ONNX graph; the rest sit next to it
+    files: tuple[str, ...]  # the first one is the model file; the rest sit next to it
 
     def path(self) -> str:
         """Local path of the first file, downloading every file on first use."""
@@ -31,7 +31,11 @@ DNSMOS = Weights("TigreGotico/dnsmos-onnx", "27691a53aa069b27be6ac957013d43b3c44
                  ("sig_bak_ovr.onnx",))  # Microsoft DNSMOS P.835, MIT
 SEGMENTATION = Weights("onnx-community/pyannote-segmentation-3.0", "733a93b6473d019a773298e08cefa686894b1854",
                        ("onnx/model.onnx",))  # pyannote segmentation-3.0, MIT
-ALL = (VAD, TAGGER, DNSMOS, SEGMENTATION)
+SER = Weights("3loi/SER-Odyssey-Baseline-WavLM-Multi-Attributes", "00d0e12ba9bf957f5aeea36e8663c8c61cb50ac9",
+              ("model.safetensors", "config.json"))  # WavLM-large arousal/dominance/valence, MSP-Podcast, MIT
+WAVLM_CONFIG = Weights("microsoft/wavlm-large", "c1423ed94bb01d80a3f5ce5bc39f6026a0f4828c",
+                       ("config.json",))  # architecture only; the weights come from SER
+ALL = (VAD, TAGGER, DNSMOS, SEGMENTATION, SER, WAVLM_CONFIG)
 
 if __name__ == "__main__":
     for w in ALL:

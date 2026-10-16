@@ -128,6 +128,12 @@ evidence for the tone."""
 
 USER_PROMPT = "Label this call."
 
+SER_PROMPT = """\
+A speech-emotion model scored the voices in 4-second windows from 0 to 1. Arousal: median \
+{arousal_p50:.2f}, 90th percentile {arousal_p90:.2f} (about 0.8 is a highly activated voice: \
+angry, agitated, excited or panicked; about 0.4 is calm). Valence: median {valence_p50:.2f} \
+(unreliable on phone audio; take polarity from the words). It hears the agent too."""
+
 
 class LLMUnavailable(Exception):
     """No API key, or the API failed after retries. The caller falls back to defaults."""
@@ -270,11 +276,16 @@ def _acoustics_text(acoustics: dict) -> str:
 
     Silence, quality and noise severity are decided by the measurements and left out.
     """
+    lines = []
     if _noise_absent(acoustics):
-        return 'Signal analysis found no background noise: answer noise "".'
-    tags = ", ".join(f"{label} {score:.2f}" for label, score in (acoustics.get("noise_tags") or [])[:3])
-    found = "background noise" if acoustics.get("background_noise_present") else "no decision on noise"
-    return f"Signal analysis: {found}" + (f"; sound-event tags (hints only): {tags}." if tags else ".")
+        lines.append('Signal analysis found no background noise: answer noise "".')
+    elif "background_noise_present" in acoustics or acoustics.get("noise_tags"):
+        tags = ", ".join(f"{label} {score:.2f}" for label, score in (acoustics.get("noise_tags") or [])[:3])
+        found = "background noise" if acoustics.get("background_noise_present") else "no decision on noise"
+        lines.append(f"Signal analysis: {found}" + (f"; sound-event tags (hints only): {tags}." if tags else "."))
+    if ser := acoustics.get("ser"):
+        lines.append(SER_PROMPT.format(**ser))
+    return " ".join(lines)
 
 
 def _config(spec: ModelSpec):
@@ -373,7 +384,7 @@ PHYSICAL_DEFAULTS = {"background_noise_present": False, "background_noise_severi
                      "audio_quality": "clear", "long_silence_present": False}
 
 
-def _judge_item(item, model: str, with_acoustics: bool):
+def _judge_item(item, model: str, with_acoustics: bool, with_ser: bool = False, ser_cache: dict | None = None):
     from analyzer.audio import SAMPLE_RATE, load_audio
     from analyzer.batch import Row
     from analyzer.schema import Result
@@ -386,7 +397,19 @@ def _judge_item(item, model: str, with_acoustics: bool):
             from analyzer import acoustic
 
             context = acoustic.measure(samples, SAMPLE_RATE).as_context()
+        voice = None
+        if with_ser:
+            from analyzer import ser
+
+            key = f"{item.path.parent.name}/{item.name}"
+            if ser_cache is not None and key in ser_cache:
+                voice = ser.SER(**ser_cache[key]["ser"]) if ser_cache[key]["ser"] else None
+            else:
+                voice = ser.measure(samples, SAMPLE_RATE)
+            if voice:
+                context = (context or {}) | {"ser": voice.as_context()}
         j = judge(samples, SAMPLE_RATE, context, model=model)
+        j.usage["ser"] = voice.as_context() if voice else None
     except Exception as exc:
         return Row(item.name, "failed", f"{type(exc).__name__}: {exc}", label=item.label), None
     physical = {k: (item.label or {}).get(k, v) for k, v in PHYSICAL_DEFAULTS.items()}
@@ -414,6 +437,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path("out/llm"), help="output directory (default: out/llm)")
     parser.add_argument("--acoustics", action="store_true",
                         help="measure each clip and pass the measurements to the judge, as the pipeline does")
+    parser.add_argument("--ser", action="store_true",
+                        help="score the voice with analyzer.ser, pass it to the judge, and report the fusion too")
+    parser.add_argument("--ser-cache", type=Path, help="JSON of SER scores per <folder>/<file> to reuse")
     parser.add_argument("--fit-calibration", action="store_true",
                         help="fit CALIBRATION on these clips' tone accuracy (use the tune split only)")
     args = parser.parse_args(argv)
@@ -422,6 +448,7 @@ def main(argv: list[str] | None = None) -> None:
     if not api_key():
         parser.exit(1, "No Gemini API key: set GEMINI_API_KEY in private/.env\n")
 
+    ser_cache = json.loads(args.ser_cache.read_text()) if args.ser_cache else None
     with tempfile.TemporaryDirectory() as tmp:
         if args.source.suffix.lower() == ".zip":
             batch = manifest.from_zip(args.source, Path(tmp))
@@ -430,7 +457,7 @@ def main(argv: list[str] | None = None) -> None:
         items = batch.runnable[: args.limit]
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             done = []
-            for row, j in pool.map(lambda item: _judge_item(item, args.model, args.acoustics), items):
+            for row, j in pool.map(lambda item: _judge_item(item, args.model, args.acoustics, args.ser, ser_cache), items):
                 done.append((row, j))
                 pred = f"{j.emotional_tone}/{j.emotional_intensity} {j.confidence:.2f}" if j else row.error
                 print(f"{len(done):>4}/{len(items)} {row.name}: {pred}", flush=True)
@@ -477,6 +504,22 @@ def main(argv: list[str] | None = None) -> None:
     if scores := score(rows):
         scores = replace(scores, accuracy={f: a for f, a in scores.accuracy.items() if f in OWN_FIELDS})
         print("\n" + scores.to_markdown())
+
+    if args.ser:
+        from analyzer import ser
+
+        fused = []
+        for row, j in judged:
+            voice = ser.SER(**j.usage["ser"]) if j.usage.get("ser") else None
+            tone, intensity, rule = ser.fuse(j.emotional_tone, j.emotional_intensity, voice)
+            fused.append((row, replace(row, result=row.result.model_copy(
+                update={"emotional_tone": tone, "emotional_intensity": intensity})), rule))
+        if fused_scores := score([f for _, f, _ in fused]):
+            print("\nFused with the voice's arousal (experiment 2): tone accuracy "
+                  f"{fused_scores.accuracy.get('emotional_tone', 0):.3f}, macro-F1 {fused_scores.tone_macro_f1:.3f}, "
+                  f"intensity accuracy {fused_scores.accuracy.get('emotional_intensity', 0):.3f}")
+            print("Rules: " + ", ".join(f"{r} {sum(x == r for *_, x in fused)}" for r in ("raised", "lowered", "intensity", "llm")))
+            print(fused_scores.to_markdown().split("Tone confusion")[1])
 
     toned = [(row.label["emotional_tone"] == j.emotional_tone, j) for row, j in judged
              if row.label and "emotional_tone" in row.label]
