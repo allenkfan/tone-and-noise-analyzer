@@ -57,17 +57,17 @@ def voice(arousal):
 
 
 @pytest.mark.parametrize("tone_in, arousal, expected", [
-    ("neutral", 0.80, ("frustrated", "high", "raised")),
-    ("frustrated", 0.80, ("upset", "high", "raised")),
-    ("upset", 0.30, ("frustrated", "low", "lowered")),
-    ("neutral", 0.30, ("neutral", "low", "intensity")),
-    ("satisfied", 0.80, ("satisfied", "high", "intensity")),
-    ("upset", 0.55, ("upset", "medium", "intensity")),
+    ("neutral", 0.50, ("frustrated", "medium", "raised")),
+    ("neutral", 0.30, ("neutral", "low", "kept")),
+    ("frustrated", 0.80, ("upset", "low", "raised")),
+    ("frustrated", 0.50, ("frustrated", "low", "kept")),
+    ("upset", 0.20, ("upset", "low", "kept")),
+    ("satisfied", 0.90, ("satisfied", "low", "kept")),
 ])
 def test_fuse_table(tone_in, arousal, expected, monkeypatch):
-    monkeypatch.setattr(ser, "AROUSAL_LOW", 0.45)
-    monkeypatch.setattr(ser, "AROUSAL_HIGH", 0.65)
-    assert ser.fuse(tone_in, "medium", voice(arousal)) == expected
+    monkeypatch.setattr(ser, "AROUSAL_RAISE", 0.35)
+    monkeypatch.setattr(ser, "AROUSAL_UPSET", 0.65)
+    assert ser.fuse(tone_in, "low", voice(arousal)) == expected
 
 
 def test_fuse_without_voice_keeps_the_llm_answer():

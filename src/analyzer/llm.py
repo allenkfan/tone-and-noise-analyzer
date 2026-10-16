@@ -518,7 +518,7 @@ def main(argv: list[str] | None = None) -> None:
             print("\nFused with the voice's arousal (experiment 2): tone accuracy "
                   f"{fused_scores.accuracy.get('emotional_tone', 0):.3f}, macro-F1 {fused_scores.tone_macro_f1:.3f}, "
                   f"intensity accuracy {fused_scores.accuracy.get('emotional_intensity', 0):.3f}")
-            print("Rules: " + ", ".join(f"{r} {sum(x == r for *_, x in fused)}" for r in ("raised", "lowered", "intensity", "llm")))
+            print("Rules: " + ", ".join(f"{r} {sum(x == r for *_, x in fused)}" for r in ("raised", "kept", "llm")))
             print(fused_scores.to_markdown().split("Tone confusion")[1])
 
     toned = [(row.label["emotional_tone"] == j.emotional_tone, j) for row, j in judged

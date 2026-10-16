@@ -30,11 +30,14 @@ BATCH = 8
 
 FUSE = True  # apply `fuse` in pipeline.merge; the context line goes to the LLM either way
 
-# Fusion with the LLM's answer (experiment 2). The voice decides how activated the customer
-# is; the LLM, which reads the words, decides the polarity. Cut points on the 90th percentile
-# of window arousal, fitted on the CREMA-D tune split.
-AROUSAL_LOW = 0.45  # below: intensity low; an "upset" answer drops to frustrated
-AROUSAL_HIGH = 0.65  # at or above: intensity high; neutral rises to frustrated, frustrated to upset
+# Fusion with the LLM's answer (experiment 2). The voice says how activated the customer is;
+# the LLM, which reads the words, keeps the polarity. Cut points on the 90th percentile of
+# window arousal, chosen by grid search on the CREMA-D tune split (acted neutral speech sits
+# near 0.27; real calls, agent included, read 0.6 and up, so these won't transfer as they are).
+# Taking intensity from arousal lowered intensity accuracy on tune, and lowering "upset" at
+# low arousal never helped, so neither is done.
+AROUSAL_RAISE = 0.35  # neutral -> frustrated (medium)
+AROUSAL_UPSET = 0.65  # frustrated -> upset
 
 
 @dataclass
@@ -69,21 +72,19 @@ def measure(samples: np.ndarray, sr: int) -> SER | None:
 def fuse(tone: str, intensity: str, ser: SER | None) -> tuple[str, str, str]:
     """Adjust the LLM's (tone, intensity) with the voice's arousal. Returns (tone, intensity, rule).
 
-    | LLM tone   | arousal p90 < LOW          | LOW to HIGH | >= HIGH                     |
-    | neutral    | neutral, low               | neutral     | frustrated, high            |
-    | frustrated | frustrated, low            | frustrated  | upset, high                 |
-    | upset      | frustrated, low            | upset       | upset, high                 |
-    | satisfied, distressed | tone kept; intensity from arousal          |
+    | LLM tone   | arousal p90 >= AROUSAL_RAISE | >= AROUSAL_UPSET |
+    | neutral    | frustrated, medium           | frustrated, medium |
+    | frustrated | frustrated (kept)            | upset, intensity kept |
+    | others     | kept                         | kept |
     """
     if ser is None:
         return tone, intensity, "llm"
     a = ser.arousal_p90
-    level = "low" if a < AROUSAL_LOW else "high" if a >= AROUSAL_HIGH else "medium"
-    if level == "high" and tone in ("neutral", "frustrated"):
-        return ("frustrated" if tone == "neutral" else "upset"), level, "raised"
-    if level == "low" and tone == "upset":
-        return "frustrated", level, "lowered"
-    return tone, level, "intensity"
+    if tone == "neutral" and a >= AROUSAL_RAISE:
+        return "frustrated", "medium", "raised"
+    if tone == "frustrated" and a >= AROUSAL_UPSET:
+        return "upset", intensity, "raised"
+    return tone, intensity, "kept"
 
 
 def windows(mono: np.ndarray, gate: bool = True) -> list[np.ndarray]:
