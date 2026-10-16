@@ -74,6 +74,7 @@ MODELS: dict[str, ModelSpec] = {
 # fewer than 5 clips are merged into their neighbour. A model without an entry reports raw confidence.
 CALIBRATION: dict[tuple[str, str], list[tuple[float, float]]] = {
     ("gemini-3.5-flash-lite", "v6"): [(0.8, 0.2), (0.85, 0.308), (0.9, 0.378), (0.95, 0.406), (1.0, 0.406)],
+    ("gemini-3.5-flash-lite", "v7"): [(0.8, 0.275), (0.85, 0.447), (0.9, 0.447), (0.95, 0.514)],
 }
 
 SYSTEM_PROMPT = """\

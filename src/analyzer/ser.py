@@ -37,8 +37,9 @@ GUARD = True  # never raise when the LLM reads the customer's words as positive
 # near 0.27; real calls, agent included, read 0.6 and up, so these won't transfer as they are).
 # Taking intensity from arousal lowered intensity accuracy on tune, and lowering "upset" at
 # low arousal never helped, so neither is done.
-AROUSAL_RAISE = 0.35  # neutral -> frustrated (medium)
-AROUSAL_UPSET = 0.65  # frustrated -> upset
+# Refitted for prompt v7 with arousal over the customer's turns (on CREMA-D, all of the clip).
+AROUSAL_RAISE = 0.40  # neutral -> frustrated (medium)
+AROUSAL_UPSET = 0.80  # frustrated -> upset
 
 
 @dataclass
