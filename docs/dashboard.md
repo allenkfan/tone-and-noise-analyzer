@@ -5,9 +5,9 @@ The dashboard takes a batch of call recordings plus a CSV manifest and returns o
 | Dashboard | URL | What runs there |
 | --- | --- | --- |
 | Test | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space | the latest build under test |
-| Submission | https://allen-videolytics-tone-and-noise-analyzer.hf.space | the frozen release for evaluation (currently the placeholder build; the final model will be promoted here) |
+| Submission | https://allen-videolytics-tone-and-noise-analyzer.hf.space | the frozen release for evaluation (build `be53f5c`) |
 
-The test dashboard runs the model under development: local acoustic models plus the Gemini audio judge. Its answers can change with every deploy. The submission dashboard still runs the **placeholder analyzer**, which gives every clip the same "neutral, nothing detected" answer with confidence 0.0, until the final model is promoted there. On the placeholder, test uploading, validation, error handling and downloads, not accuracy.
+Both dashboards run the full model: local acoustic models plus the Gemini audio judge at temperature 0. The submission dashboard is frozen at release build `be53f5c`. The test dashboard gets new builds first, so its answers can change with every deploy.
 
 ## 1. Sign in
 
@@ -105,7 +105,7 @@ After a run, the uploaded audio is deleted from the server and the upload boxes 
 ## Privacy
 
 - Audio is processed on Hugging Face's servers, where the dashboard runs.
-- On the test dashboard, each clip is also sent to Google's Gemini API to judge tone, intensity, noise type and overlap. See the external API disclosure in [technical-memo.md](technical-memo.md). The submission dashboard sends nothing to Gemini until the final model is promoted there.
+- On both dashboards, each clip is also sent to Google's Gemini API to judge tone, intensity, noise type and overlap. See the external API disclosure in [technical-memo.md](technical-memo.md).
 - Uploaded files are deleted as soon as a batch finishes, and the app's file cache is cleared every hour.
 - The logs record only filenames, statuses and timings, never audio or results.
 - Usage analytics are turned off.
