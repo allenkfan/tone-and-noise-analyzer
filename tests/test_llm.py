@@ -50,6 +50,7 @@ def clip():
 def fake(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(llm, "_breaker", llm._Breaker())
+    monkeypatch.setattr(llm, "CALIBRATION", {})
 
     def install(*replies):
         client = FakeClient(*replies)
@@ -132,9 +133,16 @@ def test_mono_input_is_accepted(clip):
 
 
 def test_calibration_interpolates(monkeypatch):
-    assert llm.calibrate(0.9) == 0.9
-    monkeypatch.setattr(llm, "CALIBRATION", [(0.0, 0.2), (1.0, 0.6)])
+    monkeypatch.setattr(llm, "CALIBRATION", {llm.MODEL: [(0.0, 0.2), (1.0, 0.6)]})
     assert llm.calibrate(0.5) == pytest.approx(0.4)
+    assert llm.calibrate(0.5, "gemini-3.8-flash") == 0.5
+
+
+def test_default_model_is_calibrated(fake, clip, monkeypatch):
+    monkeypatch.setattr(llm, "CALIBRATION", {llm.MODEL: [(0.5, 0.1), (1.0, 0.3)]})
+    fake(ANSWER)
+    j = llm.judge(clip, SR)
+    assert j.confidence == pytest.approx(0.18) and j.usage["raw_confidence"] == 0.7
 
 
 def test_dev_runner_scores_a_labeled_folder(fake, batch_dir, monkeypatch, tmp_path, capsys):

@@ -64,9 +64,12 @@ MODELS: dict[str, ModelSpec] = {
     "gemini-3.8-flash": ModelSpec(0.75, 0.75, 3.75, {"thinking_level": "low"}, None),
 }
 
-# Piecewise-linear map from the model's self-reported confidence to observed tone
-# accuracy, as (raw, calibrated) points fitted on the tune split. Empty: identity.
-CALIBRATION: list[tuple[float, float]] = []
+# Piecewise-linear maps from the model's self-reported confidence to observed tone
+# accuracy, as (raw, calibrated) points. Fitted with --fit-calibration on the CREMA-D
+# tune split (300 clips, prompt v1). A model without an entry reports raw confidence.
+CALIBRATION: dict[str, list[tuple[float, float]]] = {
+    "gemini-3.5-flash-lite": [(0.8, 0.25), (0.85, 0.389), (0.9, 0.389), (0.95, 0.398)],
+}
 
 SYSTEM_PROMPT = """\
 You listen to recordings of customer-service phone calls and label how the customer \
@@ -192,11 +195,11 @@ def judge(samples: np.ndarray, sr: int, acoustics: dict | None = None, *, model:
              model, usage["audio_tokens"], usage["output_tokens"], usage["usd"], seconds)
     log.debug("llm rationale: %s", answer.rationale)
     return Judgement(answer.emotional_tone, answer.emotional_intensity, noise_type,
-                     answer.speaker_overlap_present, calibrate(answer.confidence), answer.rationale, usage)
+                     answer.speaker_overlap_present, calibrate(answer.confidence, model), answer.rationale, usage)
 
 
-def calibrate(raw: float) -> float:
-    return calibrate_with(CALIBRATION, raw)
+def calibrate(raw: float, model: str = MODEL) -> float:
+    return calibrate_with(CALIBRATION.get(model, []), raw)
 
 
 def calibrate_with(points: list[tuple[float, float]], raw: float) -> float:
@@ -467,7 +470,7 @@ def main(argv: list[str] | None = None) -> None:
     if toned:
         correct = [c for c, _ in toned]
         print(f"\nTone ECE (10 bins): {calibration_error([j.confidence for _, j in toned], correct):.3f} "
-              f"on the reported confidence{' (calibrated)' if CALIBRATION else ''}")
+              f"on the reported confidence{' (calibrated)' if args.model in CALIBRATION else ''}")
         if args.fit_calibration:
             raw = [j.usage["raw_confidence"] for _, j in toned]
             points = fit_calibration(raw, correct)
