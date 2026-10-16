@@ -237,9 +237,9 @@ Decode and measurement, and the end-to-end figure, measured on call-length clips
 | --- | --- | --- |
 | Acoustic only, local Intel i5 laptop | 3.8, 4.1 with overlap | VAD 0.3, tagger 1.4, DNSMOS 1.8, overlap segmentation 0.25 (DNSMOS feeds no rule and is the cheapest cut) |
 | Acoustic only, Spaces CPU Basic, 2 vCPU | 2.6 to 3.1 | real-time factor about 0.05 |
-| Hybrid end to end, Spaces CPU Basic | 4.9 to 5.3 | a 180 s call takes about 14 s; a 60 s call about 6 s |
+| Hybrid end to end, Spaces CPU Basic | 5.3 to 5.6 | with overlap detection and prompt v6 (6ac18eb, the 3 example calls, two runs); 4.9 to 5.3 on the release build be53f5c. A 180 s call takes about 14 to 17 s, a 60 s call about 6 s |
 
-The first file after a restart adds about 1.1 s of model loading. Very short clips are dominated by per-file overhead (about 0.5 s each warm). A batch of 100 three-minute calls therefore finishes in about 25 minutes on the current single-worker setup.
+The first file after a restart adds about 1.1 s of model loading. Very short clips are dominated by per-file overhead (about 0.5 s each warm). A batch of 100 three-minute calls therefore finishes in about 27 minutes on the current single-worker setup.
 
 ## 7. External API disclosure
 
