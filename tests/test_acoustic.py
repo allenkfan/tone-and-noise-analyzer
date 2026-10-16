@@ -38,7 +38,7 @@ def acoustics(**overrides) -> Acoustics:
     base = dict(duration_s=30.0, speech_ratio=0.6, longest_silence_s=2.0, snr_db=40.0, clipping_ratio=0.0,
                 bandwidth_hz=4000.0, rms_dbfs=-22.0, noise_tags=[], long_silence_present=False,
                 audio_quality="clear", background_noise_present=False, background_noise_severity="none",
-                noise_type_guess="", noise_floor_dbfs=-70.0, dropouts_per_min=0.0, mos_sig=3.5,
+                noise_type_guess="", noise_floor_dbfs=-70.0, floor_snr_db=40.0, peak_spread_db=5.0, dropouts_per_min=0.0, mos_sig=3.5,
                 mos_bak=4.0, mos_ovr=3.0)
     return Acoustics(**{**base, **overrides})
 
@@ -106,6 +106,14 @@ def test_dropouts_count_zeroed_frames_inside_speech():
     for k in range(10):
         x[k * SR + 4000 : k * SR + 4320] = 0  # 20 ms holes, once a second
     assert acoustic.dropouts_per_min(x, mask) == pytest.approx(60, abs=6)
+
+
+def test_dropouts_late_in_a_long_call_line_up_with_the_speech_mask():
+    x = tone(180, -20)
+    mask = np.zeros(-(-len(x) // acoustic.VAD_FRAME), bool)
+    mask[int(149 / FRAME_S) : int(151 / FRAME_S)] = True  # speech only around 150 s
+    x[150 * SR : 150 * SR + 320] = 0
+    assert acoustic.dropouts_per_min(x, mask) > 0
 
 
 def test_quality_rules_ignore_noise():

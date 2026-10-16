@@ -64,6 +64,8 @@ class Acoustics:
     noise_type_guess: str  # from noise_tags; "" when no noise
     # further measurements
     noise_floor_dbfs: float | None  # level of non-speech away from speech; None if none
+    floor_snr_db: float | None  # speech vs the steady floor under it (minimum statistics)
+    peak_spread_db: float | None  # spread of the loudest speech peaks; clipping flattens it to 0
     dropouts_per_min: float  # abrupt near-silent gaps inside speech, per minute of speech
     mos_sig: float  # DNSMOS P.835, 1 to 5: speech signal
     mos_bak: float  # background intrusiveness
@@ -121,6 +123,8 @@ def measure(samples: np.ndarray, sr: int) -> Acoustics:
         background_noise_severity="none",
         noise_type_guess="",
         noise_floor_dbfs=None if noise_power is None else _db(noise_power),
+        floor_snr_db=floor_snr_db(frames, mask),
+        peak_spread_db=peak_spread_db(x, mask),
         dropouts_per_min=dropouts_per_min(x, mask),
         mos_sig=sig,
         mos_bak=bak,
@@ -255,6 +259,46 @@ def clipping_ratio(x: np.ndarray) -> float:
     return float(np.mean(a >= 0.95 * level))
 
 
+def floor_snr_db(frames: np.ndarray, mask: np.ndarray, block_s: float = 0.5) -> float | None:
+    """Speech level against the steady noise floor under it, by minimum statistics.
+
+    In each frequency band the smoothed power drops to the floor between syllables, so the
+    minimum over about 1.5 s tracks steady noise even where suppression mutes the pauses.
+    """
+    if mask.sum() * FRAME_S < 1.0:
+        return None
+    power = np.abs(np.fft.rfft(frames * np.hanning(frames.shape[1]), axis=1)) ** 2
+    smooth = np.empty_like(power)
+    smooth[0] = power[0]
+    for i in range(1, len(power)):
+        smooth[i] = 0.7 * smooth[i - 1] + 0.3 * power[i]
+    b = max(int(block_s / FRAME_S), 1)
+    nb = -(-len(smooth) // b)
+    padded = np.concatenate([smooth, np.repeat(smooth[-1:], nb * b - len(smooth), axis=0)])
+    block_min = padded.reshape(nb, b, -1).min(axis=1)
+    near = np.minimum(np.minimum(block_min, np.roll(block_min, 1, axis=0)), np.roll(block_min, -1, axis=0))
+    floor = np.repeat(near, b, axis=0)[: len(smooth)].sum(axis=1)
+    speech = power[mask].sum(axis=1).mean()
+    noise = max(1.5 * float(np.median(floor[mask])), 1e-12)
+    return _db(max(speech - noise, 1e-3 * noise) / noise)
+
+
+def peak_spread_db(x: np.ndarray, mask: np.ndarray, win: int = 128) -> float | None:
+    """dB between the 99.5th and 95th percentile of 8 ms peaks in speech.
+
+    Speech peaks vary by several dB. Clipping flattens the loudest against a ceiling, and that
+    survives a codec's smearing of the waveform, which sample counts at full scale do not.
+    """
+    n = len(x) // win
+    in_speech = np.repeat(mask, VAD_FRAME // win)[:n]
+    peaks = np.abs(x[: len(in_speech) * win]).reshape(-1, win).max(axis=1)[in_speech]
+    if len(peaks) < 100 or peaks.max() <= 0:
+        return None
+    peaks = peaks[peaks > 0.1 * peaks.max()]
+    hi, lo = np.percentile(peaks, [99.5, 95])
+    return 20 * float(np.log10(hi / lo)) if lo > 0 else None
+
+
 def bandwidth(frames: np.ndarray) -> float:
     """99% rolloff of the pre-emphasized long-term spectrum. Muffled or band-limited speech is low."""
     y = np.concatenate([frames[:, :1], frames[:, 1:] - 0.97 * frames[:, :-1]], axis=1)
@@ -265,8 +309,9 @@ def bandwidth(frames: np.ndarray) -> float:
     return float(freqs[np.searchsorted(np.cumsum(spec) / spec.sum(), 0.99)])
 
 
-def dropouts_per_min(x: np.ndarray, mask: np.ndarray, sub: int = 160) -> float:
-    """Abrupt drops to near silence, 10 to 120 ms long, inside speech: packet loss and gating."""
+def dropouts_per_min(x: np.ndarray, mask: np.ndarray, sub: int = 128) -> float:
+    """Abrupt drops to near silence, 8 to 120 ms long, inside speech: packet loss and gating."""
+    assert VAD_FRAME % sub == 0, "sub-frames must tile the VAD frames or the mask drifts"
     n = len(x) // sub
     if n == 0 or not mask.any():
         return 0.0
@@ -278,7 +323,7 @@ def dropouts_per_min(x: np.ndarray, mask: np.ndarray, sub: int = 160) -> float:
     dead = in_speech & (level < min(speech_level - 45, -70))
     count = 0
     for a, b in _runs(dead):
-        if dead[a] and b - a <= 12 and a > 0 and b < n and level[a - 1] > speech_level - 25 \
+        if dead[a] and (b - a) * sub <= 0.12 * SR and a > 0 and b < n and level[a - 1] > speech_level - 25 \
                 and level[b] > speech_level - 25:
             count += 1
     return count / (in_speech.sum() * sub / SR / 60)

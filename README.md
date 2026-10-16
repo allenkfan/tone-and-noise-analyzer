@@ -29,3 +29,8 @@ Requires [uv](https://docs.astral.sh/uv/) and ffmpeg. Audio, labels and credenti
 - [docs/dashboard.md](docs/dashboard.md): how to use the hosted dashboard (sign in, batch format, results, troubleshooting)
 - [docs/development.md](docs/development.md): the development and deployment workflow
 - [docs/technical-memo.md](docs/technical-memo.md): approaches tested, architecture, validation, cost, latency and the external API disclosure
+
+## Third-party models and data
+
+- Acoustic models, run locally through onnxruntime with weights pinned in `src/analyzer/weights.py`: [Silero VAD](https://github.com/snakers4/silero-vad) (MIT), [PANNs](https://github.com/qiuqiangkong/audioset_tagging_cnn) CNN14 16 kHz (MIT) and [DNSMOS](https://github.com/microsoft/DNS-Challenge) P.835 (MIT).
+- `src/analyzer/audioset_groups.tsv` is derived from the [AudioSet ontology](https://github.com/audioset/ontology) by Google, licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).

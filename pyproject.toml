@@ -6,6 +6,7 @@ requires-python = "==3.12.*"
 dependencies = [
     "google-genai>=2.31.0",
     "gradio>=5",
+    "huggingface-hub>=1",
     "numpy>=2",
     "onnxruntime>=1.23,<1.24",
     "pydantic>=2",
