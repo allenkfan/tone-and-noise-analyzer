@@ -1,0 +1,34 @@
+# Private companion repo (data, docs, credentials)
+private/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Audio (never commit call recordings)
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.opus
+*.zip
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
