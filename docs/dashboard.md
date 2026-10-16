@@ -5,9 +5,9 @@ The dashboard takes a batch of call recordings plus a CSV manifest and returns o
 | Dashboard | URL | What runs there |
 | --- | --- | --- |
 | Test | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space | the latest build under test |
-| Submission | https://allen-videolytics-tone-and-noise-analyzer.hf.space | the frozen release for evaluation (build `be53f5c`) |
+| Submission | https://allen-videolytics-tone-and-noise-analyzer.hf.space | the frozen release for evaluation (`v1.1`, build `fca3129`) |
 
-Both dashboards run the full model: local acoustic models plus the Gemini audio judge at temperature 0. The submission dashboard is frozen at release build `be53f5c`. The test dashboard gets new builds first, so its answers can change with every deploy.
+Both dashboards run the full model: local acoustic and overlap models plus the Gemini audio judge at temperature 0. The submission dashboard is frozen at release `v1.1` (build `fca3129`). The test dashboard gets new builds first, so its answers can change with every deploy.
 
 ## 1. Sign in
 
@@ -105,7 +105,7 @@ After a run, the uploaded audio is deleted from the server and the upload boxes 
 ## Privacy
 
 - Audio is processed on Hugging Face's servers, where the dashboard runs.
-- On both dashboards, each clip is also sent to Google's Gemini API to judge tone, intensity, noise type and overlap. See the external API disclosure in [technical-memo.md](technical-memo.md).
+- On both dashboards, each clip is also sent to Google's Gemini API to judge tone, intensity and noise type. Overlap, silence, quality and noise presence are measured on the server. See the external API disclosure in [technical-memo.md](technical-memo.md).
 - Uploaded files are deleted as soon as a batch finishes, and the app's file cache is cleared every hour.
 - The logs record only filenames, statuses and timings, never audio or results.
 - Usage analytics are turned off.

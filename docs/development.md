@@ -44,7 +44,7 @@ Set `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` in `private/.env`. The app won
 │   ├── schema.py          # output schema with the exact enum values from the brief
 │   ├── audio.py           # ffmpeg decode → float32, 16 kHz, channels kept
 │   ├── pipeline.py        # analyze(samples, sr) -> Result   ← model work goes here
-│   ├── llm.py             # Gemini judge: tone, intensity, noise type, overlap; dev runner
+│   ├── llm.py             # Gemini judge: tone, intensity, noise type (overlap is measured in acoustic.py); dev runner
 │   ├── manifest.py        # folder/ZIP collection, lenient CSV parsing, validation report
 │   ├── batch.py           # per-file runner shared by the app and the CLI; CSV writer
 │   └── metrics.py         # per-field accuracy, tone macro-F1, confusion matrix
@@ -109,7 +109,7 @@ The three labeled calls are a smoke test, not a validation set. Don't tune thres
 
 ### The LLM judge
 
-`src/analyzer/llm.py` sends each clip to Gemini (`gemini-3.5-flash-lite`) for tone, intensity, noise type and overlap. It needs a paid-tier key (the free tier's terms let Google use the content): put `GEMINI_API_KEY=...` in `private/.env` locally, and add the same secret to both Spaces. Without a key, every clip takes the fallback (neutral tone, confidence 0.2) and nothing fails, so after a deploy check the logs for `llm` lines.
+`src/analyzer/llm.py` sends each clip to Gemini (`gemini-3.5-flash-lite`) for tone, intensity and noise type (speaker overlap comes from the pyannote segmentation model in `acoustic.py`). It needs a paid-tier key (the free tier's terms let Google use the content): put `GEMINI_API_KEY=...` in `private/.env` locally, and add the same secret to both Spaces. Without a key, every clip takes the fallback (neutral tone, confidence 0.2) and nothing fails, so after a deploy check the logs for `llm` lines.
 
 ```sh
 python3 private/tools/make_val_tone.py                                         # CREMA-D tone set → private/data/val/tone/{tune,test}
@@ -147,7 +147,7 @@ Both Spaces were created on 2026-10-16. They are public Docker Spaces on CPU Bas
 | Space | Purpose | App URL |
 | --- | --- | --- |
 | [tone-and-noise-analyzer-dev](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev) | deploy every change here first | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space |
-| [tone-and-noise-analyzer](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer) | the URL you submit; release build `be53f5c` on CPU Upgrade, never sleeps, Gemini key set | https://allen-videolytics-tone-and-noise-analyzer.hf.space |
+| [tone-and-noise-analyzer](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer) | the URL you submit; release `v1.1` (build `fca3129`) on CPU Upgrade, never sleeps, Gemini key set | https://allen-videolytics-tone-and-noise-analyzer.hf.space |
 
 The YAML front matter at the top of `README.md` is the Space configuration (`sdk: docker`, `app_port: 7860`). GitHub shows it as a small table. To change a secret, use the Space's **Settings → Variables and secrets** page, or `HfApi().add_space_secret(repo_id, key, value)`. Changing a secret restarts the Space.
 
