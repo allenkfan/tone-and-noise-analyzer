@@ -24,4 +24,7 @@ uv run python app.py                                    # dashboard → http://l
 
 Requires [uv](https://docs.astral.sh/uv/) and ffmpeg. Audio, labels and credentials live only in `private/` and never belong in this repo.
 
-See [docs/development.md](docs/development.md) for the development and deployment workflow.
+## Docs
+
+- [docs/dashboard.md](docs/dashboard.md): how to use the hosted dashboard (sign in, batch format, results, troubleshooting)
+- [docs/development.md](docs/development.md): the development and deployment workflow
