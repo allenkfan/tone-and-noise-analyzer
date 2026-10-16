@@ -154,3 +154,17 @@ def test_network_error_becomes_unavailable(fake, clip):
     fake(httpx.ReadTimeout("timed out"))
     with pytest.raises(llm.LLMUnavailable, match="ReadTimeout"):
         llm.judge(clip, SR)
+
+
+def test_isotonic_fit_is_monotone_and_pools_violators():
+    raw = [0.5, 0.5, 0.7, 0.7, 0.9, 0.9, 0.95]
+    correct = [False, True, True, True, False, True, True]
+    points = llm.fit_calibration(raw, correct)
+    assert [x for x, _ in points] == [0.5, 0.7, 0.9, 0.95]
+    ys = [y for _, y in points]
+    assert ys == sorted(ys) and ys[0] == 0.5 and ys[1] == ys[2] == 0.75
+
+
+def test_calibration_error():
+    assert llm.calibration_error([0.9] * 10, [True] * 9 + [False]) == pytest.approx(0.0)
+    assert llm.calibration_error([0.9] * 4, [False] * 4) == pytest.approx(0.9)

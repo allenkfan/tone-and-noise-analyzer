@@ -187,7 +187,7 @@ def judge(samples: np.ndarray, sr: int, acoustics: dict | None = None, *, model:
     noise_type = answer.background_noise_type.strip().lower()
     if _noise_absent(acoustics):
         noise_type = ""
-    usage = _usage(response, spec, model, seconds)
+    usage = _usage(response, spec, model, seconds) | {"raw_confidence": answer.confidence}
     log.info("llm %s: %d audio tokens, %d output tokens, $%.5f, %.1f s",
              model, usage["audio_tokens"], usage["output_tokens"], usage["usd"], seconds)
     log.debug("llm rationale: %s", answer.rationale)
@@ -196,10 +196,42 @@ def judge(samples: np.ndarray, sr: int, acoustics: dict | None = None, *, model:
 
 
 def calibrate(raw: float) -> float:
-    if not CALIBRATION:
+    return calibrate_with(CALIBRATION, raw)
+
+
+def calibrate_with(points: list[tuple[float, float]], raw: float) -> float:
+    if not points:
         return raw
-    xs, ys = zip(*CALIBRATION)
+    xs, ys = zip(*points)
     return float(np.interp(raw, xs, ys))
+
+
+def fit_calibration(raw: list[float], correct: list[bool]) -> list[tuple[float, float]]:
+    """Isotonic fit of observed accuracy against raw confidence (pool adjacent violators).
+
+    Returns (raw, calibrated) points for CALIBRATION, one per distinct raw value.
+    """
+    groups: dict[float, tuple[int, int]] = {}
+    for r, c in zip(raw, correct):
+        n, k = groups.get(r, (0, 0))
+        groups[r] = (n + 1, k + int(c))
+    blocks: list[list] = []  # [raw values, clips, correct]
+    for x in sorted(groups):
+        blocks.append([[x], *groups[x]])
+        while len(blocks) > 1 and blocks[-2][2] / blocks[-2][1] > blocks[-1][2] / blocks[-1][1]:
+            xs, n, k = blocks.pop()
+            blocks[-1][0] += xs
+            blocks[-1][1] += n
+            blocks[-1][2] += k
+    return [(round(x, 3), round(k / n, 3)) for xs, n, k in blocks for x in xs]
+
+
+def calibration_error(confidence: list[float], correct: list[bool], bins: int = 10) -> float:
+    """Expected calibration error: the clip-weighted gap between confidence and accuracy per bin."""
+    conf, hit = np.asarray(confidence, dtype=float), np.asarray(correct, dtype=float)
+    which = np.minimum((conf * bins).astype(int), bins - 1)
+    return float(sum(abs(conf[which == b].mean() - hit[which == b].mean()) * np.sum(which == b)
+                     for b in range(bins) if np.any(which == b)) / len(conf))
 
 
 def encode_audio(samples: np.ndarray, sr: int) -> bytes:
@@ -366,6 +398,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--workers", type=int, default=4, help="parallel API calls (default: 4)")
     parser.add_argument("--limit", type=int, help="judge only the first N clips")
     parser.add_argument("--out", type=Path, default=Path("out/llm"), help="output directory (default: out/llm)")
+    parser.add_argument("--fit-calibration", action="store_true",
+                        help="fit CALIBRATION on these clips' tone accuracy (use the tune split only)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     load_dotenv(Path("private/.env"))
@@ -420,6 +454,19 @@ def main(argv: list[str] | None = None) -> None:
     if scores := score(rows):
         scores = replace(scores, accuracy={f: a for f, a in scores.accuracy.items() if f in OWN_FIELDS})
         print("\n" + scores.to_markdown())
+
+    toned = [(row.label["emotional_tone"] == j.emotional_tone, j) for row, j in judged
+             if row.label and "emotional_tone" in row.label]
+    if toned:
+        correct = [c for c, _ in toned]
+        print(f"\nTone ECE (10 bins): {calibration_error([j.confidence for _, j in toned], correct):.3f} "
+              f"on the reported confidence{' (calibrated)' if CALIBRATION else ''}")
+        if args.fit_calibration:
+            raw = [j.usage["raw_confidence"] for _, j in toned]
+            points = fit_calibration(raw, correct)
+            fitted = [calibrate_with(points, r) for r in raw]
+            print(f"In-sample ECE after fitting: {calibration_error(fitted, correct):.3f}")
+            print(f"CALIBRATION = {points}")
 
 
 if __name__ == "__main__":
