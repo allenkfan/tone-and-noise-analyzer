@@ -12,7 +12,7 @@ Headline numbers for the LLM half:
 | --- | --- | --- |
 | Tone accuracy / macro-F1, held-out acted speech | 0.377 / 0.325 (chance 0.20) | CREMA-D test split, 300 clips, scored once |
 | Tone on the 3 real example calls | 0 of 3 (overlap 1 of 3; intensity 0 of 3, and 1 to 2 of 3 at temperature 0); the placeholder baseline got 1 of 3 | builds 65c77a6 and be53f5c (release) on the test dashboard; calls not used for tuning |
-| API cost per audio minute | $0.00059 at 3-minute calls, $0.00124 at 30-second calls (20% and 41% of the $0.003 ceiling) | measured on 603 clips |
+| API cost per audio minute | $0.00057 at 3-minute calls, $0.00116 at 30-second calls (19% and 39% of the $0.003 ceiling) | measured with the acoustic context, 300 clips |
 | API latency | median 1.4 s per short clip; 1.8 to 3.0 s per real call (31 to 172 s long), about 1.8 s per audio minute | measured |
 
 Tone accuracy is the weak point: on the three real calls the hybrid scores lower on tone than the constant placeholder. Section 4 explains why: the model reads emotion mainly from the words, and barely from the voice. Section 9 lists the follow-ups that address it.
@@ -48,8 +48,8 @@ audio file ──ffmpeg──► float32, 16 kHz
 `llm.judge` (`src/analyzer/llm.py`):
 
 - **Request.** The clip is averaged to mono and re-encoded to 16 kHz Opus in memory (24 kbps; the API bills per second of audio, not per byte) and sent inline. The Files API, which stores uploads, is never used, and nothing is written to disk.
-- **Prompt.** The system prompt restates the brief's definitions in our own words. It tells the model to judge the **customer**, whom it identifies from context (the agent greets, names the company, follows a script), since both voices share one channel; not to infer frustration or distress from loudness alone; and not to treat line-quality problems as background noise. The measurements arrive as JSON with the instruction that the physical fields are already decided; when they say no noise, the noise type is forced to an empty string.
-- **Structured output.** Gemini's JSON-schema mode with the enum values from the brief, validated again with Pydantic. A one- or two-sentence rationale comes first in the schema so the model states its evidence before the labels; the rationale is logged only at DEBUG and never written to the CSV.
+- **Prompt.** The system prompt restates the brief's definitions in our own words. It tells the model to judge the **customer**, whom it identifies from context (the agent greets, names the company, follows a script), since both voices share one channel; not to infer frustration or distress from loudness alone; and not to treat line-quality problems as background noise. The measurements arrive as one line after the audio: whether noise is present and the top three sound-event tags, as hints for the noise type. Silence, quality and severity are left out because they're already decided. When the measurements say no noise, the noise type is forced to an empty string.
+- **Structured output.** Gemini's JSON-schema mode with the enum values from the brief and short keys (output tokens cost eight times input tokens), validated again with Pydantic. A one- or two-sentence rationale comes first in the schema so the model states its evidence before the labels; the rationale is logged only at DEBUG and never written to the CSV.
 - **Thinking** is held at the model's minimum (`minimal`). Thought tokens bill as output at $2.50 per million and would dominate the cost.
 - **Temperature 0**, for reproducibility. On the tune split it kept accuracy (0.377 against 0.390 at the default temperature, paired McNemar p = 0.61) and the calibration still fits (ECE 0.030). On three repeats of the example calls, answers were identical on two calls; the third still varied, because Gemini is not fully deterministic even at 0. On the test dashboard, two runs of the released build over the example calls differed on 2 of 3 calls (tone on one, intensity on another).
 - **Reliability.** 90 s timeout; up to 3 attempts with exponential backoff on timeouts, 408, 429 and 5xx; one retry if the reply fails the schema. Any remaining failure raises `LLMUnavailable`, and `pipeline.analyze` falls back to neutral tone, low intensity, no overlap, the acoustic noise-type guess and confidence 0.2. After 3 consecutive failures, a breaker skips the API for 120 s, so a batch during an outage finishes in seconds instead of waiting out every timeout. With no API key configured, the app starts and runs entirely on the fallback.
@@ -73,7 +73,7 @@ audio file ──ffmpeg──► float32, 16 kHz
 - Every clip passes through a telephone chain (300 to 3,400 Hz band-pass, 16 kHz mono, Opus 16 kbps).
 - **Leakage control.** Actors are split 61 / 30 into tune and test, stratified by sex, so no voice appears in both. Each split holds 60 clips per tone (300 clips). Prompts and calibration were chosen on tune only; test was scored once, at the end. The three labeled example calls were never used for tuning.
 
-**Metric.** Tone accuracy and macro-F1 over the five tones; intensity accuracy on clips with an intensity label. The validation runs below sent the audio without the acoustic context that production adds, so they measure the judge alone.
+**Metric.** Tone accuracy and macro-F1 over the five tones; intensity accuracy on clips with an intensity label. Unless a run says otherwise, the validation runs below sent the audio without the acoustic context that production adds, so they measure the judge alone.
 
 **Tune split** (300 clips), used to choose the model and prompt:
 
@@ -82,6 +82,8 @@ audio file ──ffmpeg──► float32, 16 kHz
 | gemini-3.5-flash-lite, v1 (selected) | 0.390 | 0.356 | 0.421 |
 | gemini-3.5-flash-lite, v2: adds "judge the voice as much as the words" | 0.383 | 0.341 | 0.442 |
 | gemini-3.6-flash, v1 | 0.320 | 0.268 | 0.396 |
+
+These tune numbers and the test numbers below were measured with prompt v1 and without the acoustic context. The deployed prompt v6 (short keys, a one-line acoustic summary) at temperature 0 was checked on tune with the acoustic context, as production sends it: tone accuracy 0.370, macro-F1 0.329, intensity 0.433 (paired McNemar p = 0.86 against v1 at temperature 0). The test split was not rescored.
 
 **Test split** (300 clips, gemini-3.5-flash-lite, prompt v1, scored once):
 
@@ -171,11 +173,11 @@ Confusion matrices (rows: label, columns: prediction):
 
 The model reports its own confidence. On the tune split it said 0.80 to 0.95 for every clip, while accuracy was flat at about 0.25 to 0.40 across that range: overconfident and barely informative. We fitted an isotonic map (pool-adjacent-violators) from raw confidence to observed tone accuracy on tune (`python -m analyzer.llm … --fit-calibration`) and apply it in `judge`:
 
-| Raw | 0.80 | 0.85 | 0.90 | 0.95 |
+| Raw | 0.80 or less | 0.85 | 0.90 | 0.95 and above |
 | --- | --- | --- | --- | --- |
-| Calibrated | 0.25 | 0.39 | 0.39 | 0.40 |
+| Calibrated | 0.20 | 0.31 | 0.38 | 0.41 |
 
-Expected calibration error (10 bins): 0.526 on tune before calibration; 0.029 on test after calibration. The calibration was fitted on acted speech and transfers to calls only approximately. It is per model; another model ID reports raw confidence until it is fitted.
+This is the fit for the deployed prompt (v6, temperature 0, with the acoustic context). Points backed by fewer than 5 clips are merged into their neighbour. Expected calibration error (10 bins) on tune before calibration: 0.539. The earlier fit for prompt v1 (0.25 to 0.40) scored 0.029 on test; the v6 fit was not scored on test. The calibration was fitted on acted speech and transfers to calls only approximately. It is per model; another model ID reports raw confidence until it is fitted.
 
 **Ambiguous tone.** When the customer's tone shifts, the prompt asks for the most prominent and sustained one; borderline cases should get lower confidence, but the raw scores show the model rarely does that, which is why calibration matters. When the API fails, confidence is 0.2.
 
@@ -189,15 +191,15 @@ Measured over the 600 validation clips and the 3 example calls, using paid-tier 
 | --- | --- |
 | Price | $0.30 per million input tokens (text and audio alike), $2.50 per million output tokens including thinking |
 | Audio tokens | 1,512 per audio minute (about 25 per second) → **$0.00045 per audio minute** |
-| Fixed per call | 661 prompt-text tokens + about 79 output tokens, no thinking tokens → **$0.00040 per clip** |
-| Cost per audio minute | $0.00045 + $0.00040 / clip length in minutes |
+| Fixed per call | about 655 prompt-text tokens (system prompt plus the one-line acoustic summary) + about 63 output tokens, no thinking tokens → **$0.00035 per clip** |
+| Cost per audio minute | $0.00045 + $0.00035 / clip length in minutes |
 
 | Clip length | 10 s | 30 s | 60 s | 3 min |
 | --- | --- | --- | --- | --- |
-| $ per audio minute | 0.00285 | 0.00124 | 0.00085 | 0.00059 |
-| Share of the $0.003 ceiling | 95% | 41% | 28% | 20% |
+| $ per audio minute | 0.00258 | 0.00116 | 0.00081 | 0.00057 |
+| Share of the $0.003 ceiling | 86% | 39% | 27% | 19% |
 
-The fixed part dominates short clips. These figures were measured without the acoustic context. In the deployed pipeline the measurements add about 230 prompt tokens, which brings the fixed part to about $0.00053 to $0.00058 per clip (measured on the dev Space with 4 to 6 s clips). At that level the API cost alone exceeds the $0.003 ceiling for clips shorter than about 11 seconds: about $0.008 per audio minute at 4 s, $0.0011 at 30 s and $0.0007 at 3 minutes. The example calls run 31 to 172 s; the hidden set's clip lengths are unknown. Fixing this is deferred (follow-up 5). Comparison, also measured: `gemini-3.6-flash` costs $0.00075 fixed per clip and $0.00113 per audio minute ($0.00138 per minute at 3-minute calls, $0.00263 at 30 seconds), at introductory prices that double on 2027-01-01. Gemini's batch mode would halve the API cost, but its turnaround (target 24 hours) doesn't suit a dashboard where the evaluator waits for results. `gemini-2.5-flash-lite`, cheaper on paper ($0.10 text, $0.40 output), is no longer available to new API users.
+The fixed part dominates short clips. These figures were measured with prompt v6 and the acoustic context, as deployed. Before v6 the context was a JSON dump and the keys were long, and the fixed part was $0.00053 to $0.00058 per clip (measured on the dev Space). The API cost alone still exceeds the $0.003 ceiling for clips shorter than about 8 seconds (follow-up 5). The example calls run 31 to 172 s; the hidden set's clip lengths are unknown. Comparison, also measured: `gemini-3.6-flash` costs $0.00075 fixed per clip and $0.00113 per audio minute ($0.00138 per minute at 3-minute calls, $0.00263 at 30 seconds), at introductory prices that double on 2027-01-01. Gemini's batch mode would halve the API cost, but its turnaround (target 24 hours) doesn't suit a dashboard where the evaluator waits for results. `gemini-2.5-flash-lite`, cheaper on paper ($0.10 text, $0.40 output), is no longer available to new API users.
 
 ### 5.2 Compute and hosting
 
@@ -267,7 +269,7 @@ The first file after a restart adds about 1.1 s of model loading. Very short cli
 2. **Make Gemini attend to the whole call.** Add a short speaker-attributed transcript field before the labels in the response schema (discarded after parsing, never logged; about +$0.0005 per audio minute), or allow `low` thinking. Both should help identify the customer and use the lexical evidence. Measuring the gain needs item 3.
 3. **Call-like validation data.** MSP-Podcast (natural speech, academic license with an institutional signature) or synthetic two-speaker dialogues with scripted emotions. Acted single sentences can't measure customer identification, lexical cues or overlap.
 4. **Concurrency.** The batch runner is sequential and the API calls are network-bound. A small thread pool (4 to 8 calls in flight, within the paid tier's rate limits) would cut batch time by about that factor.
-5. **Lower the fixed cost for short clips (deferred).** Already tried on the tune split, on branch `llm-cost-v6`, not merged: short response keys plus a one-line acoustic summary in place of the JSON dump cut the fixed cost from about $0.00055 to $0.00035 per clip, with tone accuracy unchanged (0.383 against 0.390, paired McNemar p = 0.87). Dropping the rationale or shortening the definitions brought it to about $0.0002, but tone accuracy fell to 0.28 to 0.34 (p ≤ 0.015). Context caching doesn't apply: Gemini's implicit cache needs a prefix of at least 4,096 tokens on these models, and the prompt is about 900. Below about $0.0003 per clip, the remaining choices are a cheaper model or one call per several clips.
+5. **Lower the fixed cost further for short clips.** Prompt v6 (short keys, a one-line acoustic summary in place of the JSON dump) already cut it from about $0.00055 to $0.00035 per clip with tone accuracy unchanged. Dropping the rationale or shortening the definitions brought it to about $0.0002, but tone accuracy fell to 0.28 to 0.34 (p ≤ 0.015). Context caching doesn't apply: Gemini's implicit cache needs a prefix of at least 4,096 tokens on these models, and the prompt is about 900. Below about $0.0003 per clip, the remaining choices are a cheaper model or one call per several clips.
 6. **Detect overlap outside the LLM.** The models never report overlap. An overlapped-speech detector (for example pyannote's segmentation model, which has ONNX exports) belongs with the acoustic measurements.
 7. **Make answers fully repeatable.** Temperature 0 (section 3) removed most of the variation between runs, but not all. Caching each clip's answer by audio hash would make reruns of the same file identical.
 8. **Re-fit calibration** on call-like data once it exists, and fold the acoustic signals into the final confidence.
@@ -276,9 +278,9 @@ The first file after a restart adds about 1.1 s of model loading. Very short cli
 
 ```sh
 python3 private/tools/make_val_tone.py                                     # builds private/data/val/tone (seed 20261016)
-uv run python -m analyzer.llm private/data/val/tone/tune --fit-calibration # tune: metrics, cost, calibration fit
+uv run python -m analyzer.llm private/data/val/tone/tune --acoustics --fit-calibration # tune: metrics, cost, calibration fit
 uv run python -m analyzer.llm private/data/val/tone/test                   # test: score once
 uv run python -m analyzer.llm private/data/example                         # the 3 example calls
 ```
 
-Needs `GEMINI_API_KEY` (paid tier) in `private/.env`. Model ID, prompt version (`v1`), prices and calibration points are constants at the top of `src/analyzer/llm.py`. Per-clip judgements, including token counts and cost, are written to `out/llm/<model>.jsonl`.
+Needs `GEMINI_API_KEY` (paid tier) in `private/.env`. Model ID, prompt version (`v6`), prices and calibration points are constants at the top of `src/analyzer/llm.py`. Per-clip judgements, including token counts and cost, are written to `out/llm/<model>.jsonl`.

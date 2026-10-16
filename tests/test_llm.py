@@ -11,9 +11,7 @@ from analyzer import llm
 from analyzer.schema import TONES
 
 SR = 16_000
-ANSWER = {"rationale": "The caller asks about a refund calmly.", "emotional_tone": "frustrated",
-          "emotional_intensity": "medium", "background_noise_type": "Television ",
-          "speaker_overlap_present": True, "confidence": 0.7}
+ANSWER = {"rationale": "The caller sighs and repeats the refund request.", "tone": "frustrated", "intensity": "medium", "noise": "Television ", "overlap": True, "confidence": 0.7}
 
 
 def usage(audio=960, text=600, output=80, thoughts=0):
@@ -89,7 +87,7 @@ def test_judge_parses_answer_and_costs_it(fake, clip):
     audio = request["contents"][0].parts[0]
     assert audio.inline_data.mime_type == "audio/ogg"
     assert audio.inline_data.data[:4] == b"OggS"
-    assert request["config"].response_json_schema["properties"]["emotional_tone"]["enum"] == list(TONES)
+    assert request["config"].response_json_schema["properties"]["tone"]["enum"] == list(TONES)
 
 
 def test_default_model_runs_at_temperature_zero(fake, clip):
@@ -103,12 +101,17 @@ def test_acoustics_go_in_the_prompt_and_no_noise_empties_the_type(fake, clip):
     acoustics = {"snr_db": None, "noise_tags": [], "background_noise_present": False, "new_key": 1}
     j = llm.judge(clip, SR, acoustics)
     texts = " ".join(p.text for p in client.requests[0]["contents"][0].parts if p.text)
-    assert '"new_key": 1' in texts and "empty background_noise_type" in texts
+    assert 'no background noise: answer noise ""' in texts
     assert j.background_noise_type == ""
 
 
+def test_noise_tags_are_passed_as_hints():
+    text = llm._acoustics_text({"background_noise_present": True, "noise_tags": [["TV or radio", 0.58], ["music", 0.05]]})
+    assert "TV or radio 0.58, music 0.05" in text
+
+
 def test_schema_failure_is_retried_once(fake, clip):
-    client = fake("not json", {**ANSWER, "emotional_tone": "angry"}, ANSWER)
+    client = fake("not json", {**ANSWER, "tone": "angry"}, ANSWER)
     with pytest.raises(llm.LLMUnavailable):
         llm.judge(clip, SR)
     assert len(client.requests) == 2

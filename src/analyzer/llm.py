@@ -30,7 +30,7 @@ from analyzer.schema import EmotionalTone, Intensity
 log = logging.getLogger("analyzer")
 
 MODEL = "gemini-3.5-flash-lite"
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v6"
 
 REQUEST_TIMEOUT_SECONDS = 90
 HTTP_ATTEMPTS = 3  # per call, on timeouts, 408, 429 and 5xx
@@ -68,9 +68,10 @@ MODELS: dict[str, ModelSpec] = {
 
 # Piecewise-linear maps from the model's self-reported confidence to observed tone
 # accuracy, as (raw, calibrated) points. Fitted with --fit-calibration on the CREMA-D
-# tune split (300 clips, prompt v1). A model without an entry reports raw confidence.
+# tune split (300 clips, prompt v6, temperature 0, with the acoustic context); points backed by
+# fewer than 5 clips are merged into their neighbour. A model without an entry reports raw confidence.
 CALIBRATION: dict[str, list[tuple[float, float]]] = {
-    "gemini-3.5-flash-lite": [(0.8, 0.25), (0.85, 0.389), (0.9, 0.389), (0.95, 0.398)],
+    "gemini-3.5-flash-lite": [(0.8, 0.2), (0.85, 0.308), (0.9, 0.378), (0.95, 0.406), (1.0, 0.406)],
 }
 
 SYSTEM_PROMPT = """\
@@ -82,11 +83,11 @@ WHOSE TONE
 A call has an agent, who works for the company (greets the caller, often names the \
 company, follows a script, asks verification questions, offers help), and a customer, \
 who called about a problem or request. Both voices are on the same channel, so decide \
-from what is said which voice is the customer. Judge emotional_tone and \
-emotional_intensity from the customer alone; the agent's scripted warmth or calm says \
+from what is said which voice is the customer. Judge tone and \
+intensity from the customer alone; the agent's scripted warmth or calm says \
 nothing about the customer. If only one person can be heard, judge that person.
 
-EMOTIONAL_TONE: the main emotion the customer expresses over the clip. If it shifts, \
+TONE: the main emotion the customer expresses over the clip. If it shifts, \
 choose the one that is most prominent and sustained.
 - neutral: no clear positive or negative emotion; routine and matter-of-fact.
 - satisfied: clearly positive; pleased, relieved, grateful or appreciative.
@@ -94,7 +95,7 @@ choose the one that is most prominent and sustained.
 - upset: clearly angry, agitated or strongly dissatisfied.
 - distressed: highly emotional, overwhelmed, panicked, crying, or otherwise escalated.
 
-EMOTIONAL_INTENSITY: how strongly the customer expresses that tone.
+INTENSITY: how strongly the customer expresses that tone.
 - low: subtle or mild.
 - medium: clear and sustained.
 - high: strong or escalated; the kind of call someone should look at.
@@ -105,7 +106,7 @@ or tearful voice, pace). Loudness by itself is not evidence of frustration, ange
 distress: people talk loudly on a bad line, in a noisy place, or by habit. A routine \
 "thanks, bye" is not by itself satisfaction.
 
-BACKGROUND_NOISE_TYPE: the dominant non-speech sound behind the conversation, in a few \
+NOISE: the dominant non-speech sound behind the conversation, in a few \
 plain lowercase words, for example: television, music, office chatter, road noise, \
 keyboard typing, wind, mechanical noise, static, crowd, dog barking. The voices of the \
 agent and the customer are not background noise; voices from a TV or from other people \
@@ -114,11 +115,11 @@ distortion, dropouts, muffled or quiet speech are line quality, not background n
 Return an empty string when there is no meaningful background sound; barely \
 perceptible artifacts don't count.
 
-SPEAKER_OVERLAP_PRESENT: true when two or more people talk at the same time for long \
+OVERLAP: true when two or more people talk at the same time for long \
 enough to affect understanding or analysis. Brief backchannels ("mm-hm", "yeah") and a \
 single overlapping word don't count.
 
-CONFIDENCE: your probability, from 0 to 1, that your emotional_tone is the one a careful \
+CONFIDENCE: your probability, from 0 to 1, that your tone is the one a careful \
 human annotator would choose. Go lower when the customer says little, the emotion is \
 mixed or borderline between two tones, or the speech is hard to hear.
 
@@ -126,15 +127,6 @@ RATIONALE: one or two sentences: which voice you took as the customer and the ma
 evidence for the tone."""
 
 USER_PROMPT = "Label this call."
-
-ACOUSTICS_PROMPT = """\
-Signal measurements for this clip follow as JSON. They come from the waveform, not from \
-you: silence, audio quality, noise presence and noise severity are already decided and \
-are not part of your answer. Noise tags come from a sound-event classifier; treat them \
-as hints for background_noise_type and trust your ears when they disagree.
-{context}"""
-
-NO_NOISE_PROMPT = "The measurements found no meaningful background noise: return an empty background_noise_type."
 
 
 class LLMUnavailable(Exception):
@@ -152,13 +144,15 @@ class Judgement:
     usage: dict = field(default_factory=dict)  # tokens, estimated USD, seconds
 
 
-# The response schema. Rationale comes first so the model states its evidence before the labels.
+# The response schema. Rationale comes first so the model states its evidence before the
+# labels: without it, tone accuracy on the tune split fell from 0.39 to 0.28-0.34 (prompts
+# v3 to v5, paired McNemar p <= 0.015). Keys are short because output tokens cost 8x input.
 class _Answer(BaseModel):
     rationale: str
-    emotional_tone: EmotionalTone
-    emotional_intensity: Intensity
-    background_noise_type: str
-    speaker_overlap_present: bool
+    tone: EmotionalTone
+    intensity: Intensity
+    noise: str
+    overlap: bool
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -189,15 +183,15 @@ def judge(samples: np.ndarray, sr: int, acoustics: dict | None = None, *, model:
     _breaker.succeeded()
     seconds = time.perf_counter() - start
 
-    noise_type = answer.background_noise_type.strip().lower()
+    noise_type = answer.noise.strip().lower()
     if _noise_absent(acoustics):
         noise_type = ""
     usage = _usage(response, spec, model, seconds) | {"raw_confidence": answer.confidence}
     log.info("llm %s: %d audio tokens, %d output tokens, $%.5f, %.1f s",
              model, usage["audio_tokens"], usage["output_tokens"], usage["usd"], seconds)
     log.debug("llm rationale: %s", answer.rationale)
-    return Judgement(answer.emotional_tone, answer.emotional_intensity, noise_type,
-                     answer.speaker_overlap_present, calibrate(answer.confidence, model), answer.rationale, usage)
+    return Judgement(answer.tone, answer.intensity, noise_type, answer.overlap,
+                     calibrate(answer.confidence, model), answer.rationale, usage)
 
 
 def calibrate(raw: float, model: str = MODEL) -> float:
@@ -267,10 +261,20 @@ def _contents(audio: bytes, acoustics: dict | None) -> list:
 
     parts = [types.Part.from_bytes(data=audio, mime_type="audio/ogg"), types.Part.from_text(text=USER_PROMPT)]
     if acoustics is not None:
-        parts.append(types.Part.from_text(text=ACOUSTICS_PROMPT.format(context=json.dumps(acoustics))))
-        if _noise_absent(acoustics):
-            parts.append(types.Part.from_text(text=NO_NOISE_PROMPT))
+        parts.append(types.Part.from_text(text=_acoustics_text(acoustics)))
     return [types.Content(role="user", parts=parts)]
+
+
+def _acoustics_text(acoustics: dict) -> str:
+    """The part of the measurements the judge needs, in a line instead of a JSON dump.
+
+    Silence, quality and noise severity are decided by the measurements and left out.
+    """
+    if _noise_absent(acoustics):
+        return 'Signal analysis found no background noise: answer noise "".'
+    tags = ", ".join(f"{label} {score:.2f}" for label, score in (acoustics.get("noise_tags") or [])[:3])
+    found = "background noise" if acoustics.get("background_noise_present") else "no decision on noise"
+    return f"Signal analysis: {found}" + (f"; sound-event tags (hints only): {tags}." if tags else ".")
 
 
 def _config(spec: ModelSpec):
@@ -369,7 +373,7 @@ PHYSICAL_DEFAULTS = {"background_noise_present": False, "background_noise_severi
                      "audio_quality": "clear", "long_silence_present": False}
 
 
-def _judge_item(item, model: str):
+def _judge_item(item, model: str, with_acoustics: bool):
     from analyzer.audio import SAMPLE_RATE, load_audio
     from analyzer.batch import Row
     from analyzer.schema import Result
@@ -377,7 +381,12 @@ def _judge_item(item, model: str):
     start = time.perf_counter()
     try:
         samples = load_audio(item.path)
-        j = judge(samples, SAMPLE_RATE, model=model)
+        context = None
+        if with_acoustics:
+            from analyzer import acoustic
+
+            context = acoustic.measure(samples, SAMPLE_RATE).as_context()
+        j = judge(samples, SAMPLE_RATE, context, model=model)
     except Exception as exc:
         return Row(item.name, "failed", f"{type(exc).__name__}: {exc}", label=item.label), None
     physical = {k: (item.label or {}).get(k, v) for k, v in PHYSICAL_DEFAULTS.items()}
@@ -403,6 +412,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--workers", type=int, default=4, help="parallel API calls (default: 4)")
     parser.add_argument("--limit", type=int, help="judge only the first N clips")
     parser.add_argument("--out", type=Path, default=Path("out/llm"), help="output directory (default: out/llm)")
+    parser.add_argument("--acoustics", action="store_true",
+                        help="measure each clip and pass the measurements to the judge, as the pipeline does")
     parser.add_argument("--fit-calibration", action="store_true",
                         help="fit CALIBRATION on these clips' tone accuracy (use the tune split only)")
     args = parser.parse_args(argv)
@@ -419,7 +430,7 @@ def main(argv: list[str] | None = None) -> None:
         items = batch.runnable[: args.limit]
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             done = []
-            for row, j in pool.map(lambda item: _judge_item(item, args.model), items):
+            for row, j in pool.map(lambda item: _judge_item(item, args.model, args.acoustics), items):
                 done.append((row, j))
                 pred = f"{j.emotional_tone}/{j.emotional_intensity} {j.confidence:.2f}" if j else row.error
                 print(f"{len(done):>4}/{len(items)} {row.name}: {pred}", flush=True)
