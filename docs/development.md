@@ -171,6 +171,14 @@ uv run python -c "from huggingface_hub import HfApi; print(HfApi().get_space_run
 
 ### Smoke test against a live Space
 
+```sh
+uv run python scripts/smoke_dashboard.py allen-videolytics/tone-and-noise-analyzer-dev   # or a Space id / http://127.0.0.1:7860
+```
+
+The script generates a synthetic batch, so no real calls are uploaded. The batch has WAV, Opus/OGG and MP3 clips, a corrupt file, a missing file, a `.txt` and the brief's spaced CSV. The script checks the login, both upload paths, the per-file statuses, the CSV and the empty-upload error. It exits 1 if any check fails. Run it after every deploy.
+
+To drive the dashboard from your own code:
+
 ```python
 from gradio_client import Client, handle_file
 client = Client("allen-videolytics/tone-and-noise-analyzer-dev", auth=(user, password))
