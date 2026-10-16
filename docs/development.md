@@ -20,7 +20,7 @@ Most of the work happens in loop 1. Use loop 2 before each deploy. Loop 3 is the
 | [uv](https://docs.astral.sh/uv/) | Python 3.12, dependencies, lockfile | `brew install uv`, or the release binary from github.com/astral-sh/uv/releases if Homebrew can't build it (Intel macOS 15) |
 | ffmpeg | decodes every audio format | `brew install ffmpeg` |
 | Docker | parity check against the Space image | Docker Desktop or OrbStack |
-| Hugging Face account `allen-videolytics` | hosting | write token from huggingface.co/settings/tokens |
+| Hugging Face account `allen-videolytics` | hosting | needs **PRO** ($9/month): Hugging Face won't host Docker or Gradio Spaces without it, even on free CPU Basic |
 
 ## First-time setup
 
@@ -126,23 +126,30 @@ This is the same image the Space builds. A Space build takes minutes and its log
 
 ## Loop 3: deploying to Hugging Face Spaces
 
-### One-time setup
+### The Spaces
 
-1. Create two Spaces at huggingface.co/new-space, owned by `allen-videolytics`, with SDK **Docker** (blank) and visibility **Public**. Evaluators can't reach a private Space, and the app's own login protects the public one.
-   - `tone-and-noise-analyzer-dev`: deploy every change here first
-   - `tone-and-noise-analyzer`: the URL you submit
-2. In each Space, go to **Settings → Variables and secrets** and add the secrets `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD`. They reach the app as environment variables.
-3. Add the remotes. When git asks for a password, use the write token:
-   ```sh
-   git remote add space-dev https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev
-   git remote add space     https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer
-   ```
-4. The first push to each Space needs `--force`, because Hugging Face creates the Space with its own README commit:
-   ```sh
-   git push --force space-dev main
-   ```
+Both Spaces were created on 2026-10-16. They are public Docker Spaces on CPU Basic, and both have the secrets `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` (values in `private/.env`). Evaluators can't reach a private Space, and the app's own login protects the public one.
 
-The YAML front matter at the top of `README.md` is the Space configuration (`sdk: docker`, `app_port: 7860`). GitHub shows it as a small table.
+| Space | Purpose | App URL |
+| --- | --- | --- |
+| [tone-and-noise-analyzer-dev](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev) | deploy every change here first | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space |
+| [tone-and-noise-analyzer](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer) | the URL you submit; nothing deployed yet | https://allen-videolytics-tone-and-noise-analyzer.hf.space |
+
+The YAML front matter at the top of `README.md` is the Space configuration (`sdk: docker`, `app_port: 7860`). GitHub shows it as a small table. To change a secret, use the Space's **Settings → Variables and secrets** page, or `HfApi().add_space_secret(repo_id, key, value)`. Changing a secret restarts the Space.
+
+### Setup on a new machine
+
+```sh
+uv run hf auth login         # opens a browser sign-in (device code); saves the token to ~/.cache/huggingface/token
+git remote add space-dev https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev
+git remote add space     https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer
+# let git read the token from that file for huggingface.co only (repo-local config, never committed):
+git config --local --add credential.https://huggingface.co.helper ""
+git config --local --add credential.https://huggingface.co.helper \
+  '!f() { test "$1" = get && echo username=allen-videolytics && echo "password=$(cat ~/.cache/huggingface/token)"; }; f'
+```
+
+The browser sign-in creates an OAuth token that refreshes itself. If a push is ever rejected as unauthorized, run `uv run hf auth login` again.
 
 ### Each change
 
@@ -153,7 +160,14 @@ git push space-dev main      # rebuilds the -dev Space; watch the Logs tab
 git push space main          # the submission Space
 ```
 
-Keep these pushes manual. Every push restarts the Space, and a restart in the middle of a batch kills that batch.
+Keep these pushes manual. Every push restarts the Space, and a restart in the middle of a batch kills that batch. The scaffold image builds in under a minute; model dependencies will make builds longer.
+
+To watch a build from the terminal instead of the Logs tab:
+
+```sh
+uv run python -c "from huggingface_hub import HfApi; print(HfApi().get_space_runtime('allen-videolytics/tone-and-noise-analyzer-dev').stage)"
+# BUILDING → APP_STARTING → RUNNING, or BUILD_ERROR / RUNTIME_ERROR
+```
 
 ### Smoke test against a live Space
 
@@ -168,7 +182,7 @@ The same call works against `http://127.0.0.1:7860` for a local run.
 
 ## Before submission and during evaluation
 
-- [ ] Upgrade the submission Space's hardware to paid CPU and set its sleep time to never. Free Spaces pause after about 48 hours idle.
+- [ ] Upgrade the submission Space's hardware to CPU Upgrade (8 vCPU, 32 GB, $0.03/hr) and set its sleep time to never. CPU Basic Spaces pause when idle.
 - [ ] Give evaluators the direct URL, https://allen-videolytics-tone-and-noise-analyzer.hf.space. The login cookie fails when the app is embedded in the huggingface.co Space page.
 - [ ] Tag the release: `git tag v1.0 && git push origin v1.0`. `uv.lock` pins every dependency.
 - [ ] Do not push to `space` during the evaluation window. Keep working on `space-dev`.
@@ -178,6 +192,6 @@ The same call works against `http://127.0.0.1:7860` for a local run.
 
 - **Nothing from `private/` gets committed here.** `.gitignore` blocks `private/`, `.env*` and audio files. Check `git status` before every commit anyway.
 - **Binaries.** Hugging Face rejects files over 10 MB unless they go through LFS/Xet. Weights belong in the Docker build, not in git.
-- **Privacy.** Uploaded audio is deleted after processing, and Gradio's cache is cleared hourly. Nothing about the audio is logged except file names, statuses and timings. The memo should say so.
+- **Privacy.** Uploaded audio is deleted after processing, and Gradio's cache is cleared hourly. Nothing about the audio is logged except file names, statuses and timings. Gradio's usage analytics are turned off in the image (`GRADIO_ANALYTICS_ENABLED=False`). The memo should say so.
 - **Logs.** The app logs one line per file (name, status, seconds). Find them in the Space's **Logs** tab.
 - **Visibility.** The Space's Files tab shows the source code. That's fine because the GitHub repo is public too, but secrets go only in Space secrets.

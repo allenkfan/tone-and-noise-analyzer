@@ -17,6 +17,7 @@ from analyzer.metrics import score
 
 load_dotenv(Path(__file__).parent / "private" / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 INSTRUCTIONS = """
 # Tone and Noise Analyzer

@@ -14,6 +14,7 @@ ENV PATH="/home/user/app/.venv/bin:$PATH" \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
     PYTHONUNBUFFERED=1 \
+    GRADIO_ANALYTICS_ENABLED=False \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860
 
