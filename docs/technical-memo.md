@@ -11,7 +11,7 @@ Headline numbers for the LLM half:
 | | Value | Source |
 | --- | --- | --- |
 | Tone accuracy / macro-F1, held-out acted speech | 0.377 / 0.325 (chance 0.20) | CREMA-D test split, 300 clips, scored once |
-| Tone on the 3 real example calls | 0 of 3 (intensity 0 of 3, overlap 1 of 3); the placeholder baseline got 1 of 3 | build 65c77a6 on the test dashboard; calls not used for tuning |
+| Tone on the 3 real example calls | 0 of 3 (overlap 1 of 3; intensity 0 of 3, and 1 to 2 of 3 at temperature 0); the placeholder baseline got 1 of 3 | builds 65c77a6 and be53f5c (release) on the test dashboard; calls not used for tuning |
 | API cost per audio minute | $0.00059 at 3-minute calls, $0.00124 at 30-second calls (20% and 41% of the $0.003 ceiling) | measured on 603 clips |
 | API latency | median 1.4 s per short clip; 1.8 to 3.0 s per real call (31 to 172 s long), about 1.8 s per audio minute | measured |
 
@@ -51,7 +51,7 @@ audio file ──ffmpeg──► float32, 16 kHz
 - **Prompt.** The system prompt restates the brief's definitions in our own words. It tells the model to judge the **customer**, whom it identifies from context (the agent greets, names the company, follows a script), since both voices share one channel; not to infer frustration or distress from loudness alone; and not to treat line-quality problems as background noise. The measurements arrive as JSON with the instruction that the physical fields are already decided; when they say no noise, the noise type is forced to an empty string.
 - **Structured output.** Gemini's JSON-schema mode with the enum values from the brief, validated again with Pydantic. A one- or two-sentence rationale comes first in the schema so the model states its evidence before the labels; the rationale is logged only at DEBUG and never written to the CSV.
 - **Thinking** is held at the model's minimum (`minimal`). Thought tokens bill as output at $2.50 per million and would dominate the cost.
-- **Temperature 0**, for reproducibility. On the tune split it kept accuracy (0.377 against 0.390 at the default temperature, paired McNemar p = 0.61) and the calibration still fits (ECE 0.030). On three repeats of the example calls, answers were identical on two calls; the third still varied, because Gemini is not fully deterministic even at 0.
+- **Temperature 0**, for reproducibility. On the tune split it kept accuracy (0.377 against 0.390 at the default temperature, paired McNemar p = 0.61) and the calibration still fits (ECE 0.030). On three repeats of the example calls, answers were identical on two calls; the third still varied, because Gemini is not fully deterministic even at 0. On the test dashboard, two runs of the released build over the example calls differed on 2 of 3 calls (tone on one, intensity on another).
 - **Reliability.** 90 s timeout; up to 3 attempts with exponential backoff on timeouts, 408, 429 and 5xx; one retry if the reply fails the schema. Any remaining failure raises `LLMUnavailable`, and `pipeline.analyze` falls back to neutral tone, low intensity, no overlap, the acoustic noise-type guess and confidence 0.2. After 3 consecutive failures, a breaker skips the API for 120 s, so a batch during an outage finishes in seconds instead of waiting out every timeout. With no API key configured, the app starts and runs entirely on the fallback.
 
 `acoustic.measure` (`src/analyzer/acoustic.py`), all on the CPU through onnxruntime, with weights pinned by commit hash and downloaded at image build time:
@@ -73,7 +73,7 @@ audio file ──ffmpeg──► float32, 16 kHz
 - Every clip passes through a telephone chain (300 to 3,400 Hz band-pass, 16 kHz mono, Opus 16 kbps).
 - **Leakage control.** Actors are split 61 / 30 into tune and test, stratified by sex, so no voice appears in both. Each split holds 60 clips per tone (300 clips). Prompts and calibration were chosen on tune only; test was scored once, at the end. The three labeled example calls were never used for tuning.
 
-**Metric.** Tone accuracy and macro-F1 over the five tones; intensity accuracy on clips with an intensity label.
+**Metric.** Tone accuracy and macro-F1 over the five tones; intensity accuracy on clips with an intensity label. The validation runs below sent the audio without the acoustic context that production adds, so they measure the judge alone.
 
 **Tune split** (300 clips), used to choose the model and prompt:
 
@@ -119,6 +119,7 @@ The test result matches tune (0.390 / 0.356), so tuning didn't overfit; there wa
 - **Models:** none of the three got the labeled tone on more than one call, so the stronger models offer no clear gain at their higher price.
 - **Stability:** at the models' default temperature, the same call changed tone between repeats in 5 of 9 model-call pairs. This is why the deployed judge runs at temperature 0 (section 3).
 - **Overlap:** never detected (0 of 27 answers), although two calls are labeled with overlap.
+- **Release build at temperature 0** (be53f5c, two runs on the test dashboard): tone still 0 of 3; the call labeled satisfied now reads frustrated rather than neutral; intensity 2 of 3, then 1 of 3.
 
 **Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. The synthetic two-speaker set in section 4.2 has overlap in 30% of clips and noise with a known source class in 60%, but it was used only to tune the measurements; the LLM was not run on it because of cost, so overlap and noise type are validated only on the example calls (overlap 1 of 3, noise type right on 1 of 2 noisy calls; `docs/example-calls-results.md`).
 
