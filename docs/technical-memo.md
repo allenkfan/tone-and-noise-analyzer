@@ -1,6 +1,6 @@
 # Technical memo
 
-Status 2026-10-16: delivered as is. Sections marked **(acoustic)** are written by the session that owns the deterministic measurements; everything else covers the audio LLM judge.
+Status 2026-10-16: delivered as is.
 
 ## 1. Summary
 
