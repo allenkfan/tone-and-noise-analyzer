@@ -4,7 +4,7 @@ Status 2026-10-16: delivered as is.
 
 ## 1. Summary
 
-The analyzer is a hybrid. Deterministic signal measurements on the server decide the physical fields (`long_silence_present`, `audio_quality`, `background_noise_present`, `background_noise_severity`). One call per clip to an audio-capable LLM, Google's `gemini-3.5-flash-lite`, decides the subjective fields (`emotional_tone`, `emotional_intensity`, `background_noise_type`, `speaker_overlap_present`), with the measurements passed in as context. If the API is unavailable, the batch still completes with a documented fallback.
+The analyzer is a hybrid. Deterministic signal measurements on the server decide the physical fields (`long_silence_present`, `audio_quality`, `background_noise_present`, `background_noise_severity`, `speaker_overlap_present`). One call per clip to an audio-capable LLM, Google's `gemini-3.5-flash-lite`, decides the subjective fields (`emotional_tone`, `emotional_intensity`, `background_noise_type`), with the measurements passed in as context. If the API is unavailable, the batch still completes with a documented fallback.
 
 Headline numbers for the LLM half:
 
@@ -35,12 +35,12 @@ Other external models were ruled out on cost or capability: OpenAI's audio model
 ```
 audio file ──ffmpeg──► float32, 16 kHz
                          │
-                         ├─► acoustic.measure ──► silence, quality, noise presence/severity, noise tags (acoustic)
+                         ├─► acoustic.measure ──► silence, overlap, quality, noise presence/severity, noise tags (acoustic)
                          │                              │ as JSON context
                          └─► llm.judge ◄────────────────┘
                                │ 16 kHz mono Opus, sent inline to gemini-3.5-flash-lite
                                ▼
-                         tone, intensity, noise type, overlap, confidence
+                         tone, intensity, noise type, confidence
                                │
                          pipeline.analyze merges both into one Result
 ```
@@ -52,14 +52,15 @@ audio file ──ffmpeg──► float32, 16 kHz
 - **Structured output.** Gemini's JSON-schema mode with the enum values from the brief and short keys (output tokens cost eight times input tokens), validated again with Pydantic. A one- or two-sentence rationale comes first in the schema so the model states its evidence before the labels; the rationale is logged only at DEBUG and never written to the CSV.
 - **Thinking** is held at the model's minimum (`minimal`). Thought tokens bill as output at $2.50 per million and would dominate the cost.
 - **Temperature 0**, for reproducibility. On the tune split it kept accuracy (0.377 against 0.390 at the default temperature, paired McNemar p = 0.61) and the calibration still fits (ECE 0.030). On three repeats of the example calls, answers were identical on two calls; the third still varied, because Gemini is not fully deterministic even at 0. On the test dashboard, two runs of the released build over the example calls differed on 2 of 3 calls (tone on one, intensity on another).
-- **Reliability.** 90 s timeout; up to 3 attempts with exponential backoff on timeouts, 408, 429 and 5xx; one retry if the reply fails the schema. Any remaining failure raises `LLMUnavailable`, and `pipeline.analyze` falls back to neutral tone, low intensity, no overlap, the acoustic noise-type guess and confidence 0.2. After 3 consecutive failures, a breaker skips the API for 120 s, so a batch during an outage finishes in seconds instead of waiting out every timeout. With no API key configured, the app starts and runs entirely on the fallback.
+- **Reliability.** 90 s timeout; up to 3 attempts with exponential backoff on timeouts, 408, 429 and 5xx; one retry if the reply fails the schema. Any remaining failure raises `LLMUnavailable`, and `pipeline.analyze` falls back to neutral tone, low intensity, the acoustic noise-type guess and confidence 0.2; overlap and the other physical fields still come from the measurements. After 3 consecutive failures, a breaker skips the API for 120 s, so a batch during an outage finishes in seconds instead of waiting out every timeout. With no API key configured, the app starts and runs entirely on the fallback.
 
 `acoustic.measure` (`src/analyzer/acoustic.py`), all on the CPU through onnxruntime, with weights pinned by commit hash and downloaded at image build time:
 
 - **Voice activity.** Silero VAD (MIT) gives a speech mask per 32 ms frame with hysteresis and minimum-duration rules. The mask drives everything else: the longest non-speech run (`long_silence_present` at 11 s or more), active speech level, and which frames count as pauses.
 - **Noise.** A speech-to-noise ratio from the pause energy (median, so a ringback tone doesn't dominate) and a minimum-statistics floor under speech, which still sees noise that call-side suppression mutes in the pauses. A PANNs CNN14 tagger (MIT, AudioSet's 527 classes) runs on consecutive 10 s windows; its classes are mapped to about 35 plain-word noise groups (TV or radio, music, keyboard typing, static, road noise, and so on), with the speaker's own voice, telephone signalling and room acoustics mapped to "not noise". Noise is present when the strongest noise group scores 0.25 or more, or the speech-to-noise ratio is under 20 dB, taking the worse of the floor under speech and the pause estimate (the latter only when the pauses are above -50 dBFS). Severity comes from the ratio alone: medium at 18 dB or less, high at 6 dB or less. The top groups go to the LLM as hints for the free-text noise type.
 - **Quality.** Four independent faults, none of which read the noise measures: flattened speech peaks (clipping), bandwidth of the speech spectrum, active speech level, and short dropouts inside speech (packet loss). Any severe fault, or two slight ones, is severely impaired. DNSMOS P.835 is also computed and passed to the LLM, but no rule uses it.
-- **Merge.** `pipeline.analyze` takes silence, quality, noise presence and severity from the measurements, and tone, intensity, noise type and overlap from the LLM. If the measurements say no noise, the type is an empty string regardless of the LLM. Confidence is the LLM's calibrated value (section 4.3), or 0.2 on the fallback path.
+- **Overlap.** pyannote segmentation-3.0 (MIT, 6 MB as ONNX) scores half-overlapping 10 s windows in a powerset of up to three local speakers; the probability of the two-speaker classes, averaged across windows, marks overlap frame by frame. A clip has overlap when the longest stretch is at least 0.4 s and overlap covers between 0.5% and 20% of the speech. The floor means a single flicker doesn't count. The ceiling separates crosstalk, which comes in bursts, from a TV, radio or crowd behind the caller, which overlaps nearly all of the speech. The LLM's own overlap answer is still requested but not used: it was false on every one of 600 validation clips and 27 diagnostic runs.
+- **Merge.** `pipeline.analyze` takes silence, overlap, quality, noise presence and severity from the measurements, and tone, intensity and noise type from the LLM. If the measurements say no noise, the type is an empty string regardless of the LLM. Confidence is the LLM's calibrated value (section 4.3), or 0.2 on the fallback path.
 
 ## 4. Validation
 
@@ -124,7 +125,7 @@ The test result matches tune (0.390 / 0.356), so tuning didn't overfit; there wa
 - **Release build at temperature 0** (be53f5c, two runs on the test dashboard): tone still 0 of 3; the call labeled satisfied now reads frustrated rather than neutral; intensity 2 of 3, then 1 of 3.
 - **Prompt v6** (9bc2bf5, two runs on the test dashboard): tone 0 of 3 and intensity 1 of 3, with identical tone and intensity in both runs; the crackle on the third call is now named "static"; other fields unchanged.
 
-**Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. The synthetic two-speaker set in section 4.2 has overlap in 30% of clips and noise with a known source class in 60%, but it was used only to tune the measurements; the LLM was not run on it because of cost, so overlap and noise type are validated only on the example calls (overlap 1 of 3, noise type right on 1 of 2 noisy calls; `docs/example-calls-results.md`).
+**Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. The synthetic two-speaker set in section 4.2 has overlap in 30% of clips and noise with a known source class in 60%, but it was used only to tune the measurements; the LLM was not run on it because of cost, so the LLM's overlap and noise type are validated only on the example calls (overlap 1 of 3, noise type right on 1 of 2 noisy calls; `docs/example-calls-results.md`). Overlap now comes from the measurements and is validated on the synthetic set in section 4.2.
 
 ### 4.2 Physical fields
 
@@ -140,8 +141,9 @@ The test result matches tune (0.390 / 0.356), so tuning didn't overfit; there wa
 | background_noise_present | 0.917 |
 | audio_quality | 0.837 |
 | background_noise_severity | 0.733 |
+| speaker_overlap_present | 0.787 (always false: 0.687) |
 
-Quality never flags a clean clip (152 of 152 clear clips predicted clear). The errors are: quality, slightly impaired called clear (26 of 97), 22 of them low-bitrate Opus, which no measure detects; noise presence, 18 misses of 190 noisy clips (10 at the faintest 20 dB tier, 6 at 10 dB) and 7 false alarms on clean clips from music, household, animal and bird tags; severity, medium called low (23 of 110), 18 of them intermittent ESC-50 events such as barks and knocks, because both speech-to-noise estimates use a median or a minimum and so measure the quiet between events (speech-like noise such as TV has the same effect: it reads as speech); silence, 11 false positives, 8 of them under 0 to 5 dB noise where the VAD loses the foreground speech, and 4 misses where a TV or babble background keeps the VAD on through the gap.
+Quality never flags a clean clip (152 of 152 clear clips predicted clear). The errors are: quality, slightly impaired called clear (26 of 97), 22 of them low-bitrate Opus, which no measure detects; noise presence, 18 misses of 190 noisy clips (10 at the faintest 20 dB tier, 6 at 10 dB) and 7 false alarms on clean clips from music, household, animal and bird tags; severity, medium called low (23 of 110), 18 of them intermittent ESC-50 events such as barks and knocks, because both speech-to-noise estimates use a median or a minimum and so measure the quiet between events (speech-like noise such as TV has the same effect: it reads as speech); silence, 11 false positives, 8 of them under 0 to 5 dB noise where the VAD loses the foreground speech, and 4 misses where a TV or babble background keeps the VAD on through the gap; overlap, 26 false alarms and 38 misses. Most misses are overlaps the model measures at about half their constructed length, some under 0.4 s; 7 are real overlaps on TV or babble backgrounds, which the 20% ceiling gives up (4 of 11 found there, against 9 of 11 without it) in exchange for far fewer false alarms there (4 of 25, against 20 of 25). The overlap thresholds were swept after the others were locked, by the same procedure. The test split was scored once without the ceiling (0.747) and once with it (0.787); the ceiling was chosen on the tune split.
 
 Confusion matrices (rows: label, columns: prediction):
 
@@ -168,7 +170,12 @@ Confusion matrices (rows: label, columns: prediction):
 | medium | 8 | 23 | 71 | 8 |
 | high | 0 | 5 | 14 | 21 |
 
-**Real calls.** On the three example calls, 11 of the 12 physical-field answers match the labels. The miss is severity on call_002, whose TV is predicted low and labeled medium, the same medium-to-low pattern as on the synthetic set.
+| Overlap | false | true |
+| --- | --- | --- |
+| false | 180 | 26 |
+| true | 38 | 56 |
+
+**Real calls.** On the three example calls, 14 of the 15 physical-field answers match the labels, overlap included (3 of 3, against 1 of 3 from the LLM; longest measured stretches 0.24 s on call_001, labeled false, and 0.57 s and 1.47 s on the two calls labeled true). The miss is severity on call_002, whose TV is predicted low and labeled medium, the same medium-to-low pattern as on the synthetic set.
 
 ### 4.3 Confidence calibration
 
@@ -204,7 +211,7 @@ The fixed part dominates short clips. These figures were measured with prompt v6
 
 ### 5.2 Compute and hosting
 
-The measurements run three ONNX models on the CPU (Silero VAD, PANNs CNN14, DNSMOS) plus signal measures. Compute cost per audio minute = hourly rate / 60 × processing time per audio minute, at full utilization:
+The measurements run four ONNX models on the CPU (Silero VAD, PANNs CNN14, DNSMOS, pyannote segmentation) plus signal measures. Compute cost per audio minute = hourly rate / 60 × processing time per audio minute, at full utilization:
 
 | Hosting | Rate | Acoustic only (RTF 0.05) | Hybrid, sequential, incl. API wait (RTF 0.085) |
 | --- | --- | --- | --- |
@@ -228,7 +235,7 @@ Decode and measurement, and the end-to-end figure, measured on call-length clips
 
 | Where | Seconds per audio minute | Notes |
 | --- | --- | --- |
-| Acoustic only, local Intel i5 laptop | 3.8 | VAD 0.3, tagger 1.4, DNSMOS 1.8 (DNSMOS feeds no rule and is the cheapest cut) |
+| Acoustic only, local Intel i5 laptop | 3.8, 4.1 with overlap | VAD 0.3, tagger 1.4, DNSMOS 1.8, overlap segmentation 0.25 (DNSMOS feeds no rule and is the cheapest cut) |
 | Acoustic only, Spaces CPU Basic, 2 vCPU | 2.6 to 3.1 | real-time factor about 0.05 |
 | Hybrid end to end, Spaces CPU Basic | 4.9 to 5.3 | a 180 s call takes about 14 s; a 60 s call about 6 s |
 
@@ -263,6 +270,7 @@ The first file after a restart adds about 1.1 s of model loading. Very short cli
 - **Codec and room artifacts:** low-bitrate codec artifacts, echo and reverberation are not detected by any quality rule; the field never over-flags clean audio but misses these impairments.
 - **Long silence is VAD-only:** hold music or ringback past 11 s counts as silence, and heavy noise can hide speech from the VAD and create a false long silence.
 - **Clipping versus limiters:** clipping is read from flattened speech peaks; an aggressive limiter or AGC in the telephony chain can look the same.
+- **Overlap under background voices:** a TV, radio or crowd looks like a second talker. The 20% ceiling removes most of those false alarms, but real crosstalk on a call with a TV on is then often missed, and a heated call where the parties talk over each other for more than a fifth of the time would read as no overlap. The 0.4 s threshold is short, so long backchannels may count; the synthetic set has none to measure this.
 
 **Follow-up improvements, in order of expected gain**
 
@@ -271,7 +279,7 @@ The first file after a restart adds about 1.1 s of model loading. Very short cli
 3. **Call-like validation data.** MSP-Podcast (natural speech, academic license with an institutional signature) or synthetic two-speaker dialogues with scripted emotions. Acted single sentences can't measure customer identification, lexical cues or overlap.
 4. **Concurrency.** The batch runner is sequential and the API calls are network-bound. A small thread pool (4 to 8 calls in flight, within the paid tier's rate limits) would cut batch time by about that factor.
 5. **Lower the fixed cost further for short clips.** Prompt v6 (short keys, a one-line acoustic summary in place of the JSON dump) already cut it from about $0.00055 to $0.00035 per clip with tone accuracy unchanged. Dropping the rationale or shortening the definitions brought it to about $0.0002, but tone accuracy fell to 0.28 to 0.34 (p ≤ 0.015). Context caching doesn't apply: Gemini's implicit cache needs a prefix of at least 4,096 tokens on these models, and the prompt is about 900. Below about $0.0003 per clip, the remaining choices are a cheaper model or one call per several clips.
-6. **Detect overlap outside the LLM.** The models never report overlap. An overlapped-speech detector (for example pyannote's segmentation model, which has ONNX exports) belongs with the acoustic measurements.
+6. **Overlap: tell call participants from background voices.** Done in part: overlap now comes from pyannote segmentation, with a 20% ceiling that treats near-constant overlap as a TV, radio or crowd (section 3). Next, compare the levels of the two speaker tracks so a quieter background voice is ignored without the ceiling, which would recover crosstalk on calls with a TV on and on heated calls, and validate on real two-party calls with backchannels.
 7. **Make answers fully repeatable.** Temperature 0 (section 3) removed most of the variation between runs, but not all. Caching each clip's answer by audio hash would make reruns of the same file identical.
 8. **Re-fit calibration** on call-like data once it exists, and fold the acoustic signals into the final confidence.
 
