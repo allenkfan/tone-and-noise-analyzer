@@ -82,7 +82,7 @@ Whimper (dog)	dog barking
 Cat	animal sounds
 Purr	animal sounds
 Meow	animal sounds
-Hiss	static or hiss
+Hiss	static
 Caterwaul	animal sounds
 Livestock, farm animals, working animals	animal sounds
 Horse	animal sounds
@@ -297,7 +297,7 @@ Waves, surf	running water
 Steam	running water
 Gurgling	running water
 Fire	fire crackling
-Crackle	static or hiss
+Crackle	static
 Vehicle	road noise
 Boat, Water vehicle	boat
 Sailboat, sailing ship	boat
@@ -424,17 +424,17 @@ Filing (rasp)	construction or power tools
 Sanding	construction or power tools
 Power tool	construction or power tools
 Drill	construction or power tools
-Explosion	popping or crackling
-Gunshot, gunfire	popping or crackling
-Machine gun	popping or crackling
-Fusillade	popping or crackling
-Artillery fire	popping or crackling
-Cap gun	popping or crackling
-Fireworks	popping or crackling
-Firecracker	popping or crackling
-Burst, pop	popping or crackling
-Eruption	popping or crackling
-Boom	popping or crackling
+Explosion	static
+Gunshot, gunfire	static
+Machine gun	static
+Fusillade	static
+Artillery fire	static
+Cap gun	static
+Fireworks	static
+Firecracker	static
+Burst, pop	static
+Eruption	static
+Boom	static
 Wood	household sounds
 Chop	household sounds
 Splinter	household sounds
@@ -513,13 +513,13 @@ Reverberation
 Echo	
 Noise	background noise
 Environmental noise	background noise
-Static	static or hiss
+Static	static
 Mains hum	hum or buzz
 Distortion	
 Sidetone	
 Cacophony	background noise
-White noise	static or hiss
-Pink noise	static or hiss
+White noise	static
+Pink noise	static
 Throbbing	hum or buzz
 Vibration	hum or buzz
 Television	TV or radio

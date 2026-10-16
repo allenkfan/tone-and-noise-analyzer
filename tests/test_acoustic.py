@@ -148,7 +148,7 @@ def test_measure_runs_the_real_models_on_short_and_silent_audio():
 def test_hiss_is_not_speech_and_is_tagged_as_noise():
     ac = acoustic.measure(noise(12, -25), SR)
     assert ac.speech_ratio < 0.1
-    assert ac.noise_tags and ac.noise_tags[0][0] in {"static or hiss", "background noise", "hum or buzz"}
+    assert ac.noise_tags and ac.noise_tags[0][0] in {"static", "background noise", "hum or buzz"}
 
 
 def test_groups_cover_the_tagger_labels():
@@ -156,6 +156,8 @@ def test_groups_cover_the_tagger_labels():
     assert acoustic.NOISE_GROUP[acoustic.AUDIOSET_LABELS.index("Speech")] == ""
     assert acoustic.NOISE_GROUP[acoustic.AUDIOSET_LABELS.index("Dial tone")] == ""
     assert acoustic.NOISE_GROUP[acoustic.AUDIOSET_LABELS.index("Television")] == "TV or radio"
+    for pop in ("Static", "Hiss", "Crackle", "Burst, pop", "Gunshot, gunfire", "Firecracker"):
+        assert acoustic.NOISE_GROUP[acoustic.AUDIOSET_LABELS.index(pop)] == "static"
 
 
 def judgement(**overrides) -> llm.Judgement:
