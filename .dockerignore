@@ -1,0 +1,10 @@
+private/
+out/
+.venv/
+.git/
+.pytest_cache/
+**/__pycache__/
+tests/
+docs/
+.env
+.env.*

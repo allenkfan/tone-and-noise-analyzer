@@ -32,3 +32,6 @@ venv/
 
 # Node
 node_modules/
+
+# Local outputs
+out/
