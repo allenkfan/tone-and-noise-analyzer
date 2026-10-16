@@ -29,7 +29,7 @@ from analyzer.schema import EmotionalTone, Intensity
 
 log = logging.getLogger("analyzer")
 
-MODEL = "gemini-2.5-flash-lite"
+MODEL = "gemini-3.5-flash-lite"
 PROMPT_VERSION = "v1"
 
 REQUEST_TIMEOUT_SECONDS = 90
@@ -55,12 +55,12 @@ class ModelSpec:
 
 # Paid-tier standard prices, checked 2026-10-16 at ai.google.dev/gemini-api/docs/pricing.
 # Thinking is held at the minimum: thought tokens bill as output and would dominate the cost.
+# Gemini 3 models are meant to run at their default temperature. The 2.5 models are cheaper
+# but return 404 "no longer available to new users" for this account's key.
 MODELS: dict[str, ModelSpec] = {
-    "gemini-2.5-flash-lite": ModelSpec(0.10, 0.30, 0.40, {"thinking_budget": 0}, 0.0),
-    "gemini-2.5-flash": ModelSpec(0.30, 1.00, 2.50, {"thinking_budget": 0}, 0.0),
-    # Gemini 3 models are meant to run at their default temperature.
     "gemini-3.5-flash-lite": ModelSpec(0.30, 0.30, 2.50, {"thinking_level": "minimal"}, None),
-    # Introductory price through 2026-12-31; $1.50 in and $7.50 out from 2027-01-01.
+    # Introductory prices through 2026-12-31; $1.50 in and $7.50 out from 2027-01-01.
+    "gemini-3.6-flash": ModelSpec(0.75, 0.75, 3.75, {"thinking_level": "minimal"}, None),
     "gemini-3.8-flash": ModelSpec(0.75, 0.75, 3.75, {"thinking_level": "low"}, None),
 }
 
@@ -443,12 +443,19 @@ def main(argv: list[str] | None = None) -> None:
               f"| {label.get('speaker_overlap_present', '?')}/{j.speaker_overlap_present} "
               f"| {label.get('background_noise_type', '?')!r} / {j.background_noise_type!r} |")
 
+    # Cost = a fixed part per clip (prompt text and output) plus audio tokens per second of audio.
+    spec = MODELS[args.model]
     audio_min = sum(row.audio_seconds for row, _ in judged) / 60
     usd = sum(j.usage["usd"] for _, j in judged)
     audio_tokens = sum(j.usage["audio_tokens"] for _, j in judged)
+    audio_usd_per_min = audio_tokens / audio_min * spec.audio_usd / 1e6
+    fixed_usd = (usd - audio_tokens * spec.audio_usd / 1e6) / len(judged)
     call_s = sorted(j.usage["seconds"] for _, j in judged)
-    print(f"\n{audio_min:.2f} audio min · ${usd:.5f} total · ${usd / audio_min:.5f} per audio min "
-          f"({usd / audio_min / 0.003:.0%} of the $0.003 ceiling) · {audio_tokens / audio_min:.0f} audio tokens per min")
+    print(f"\n{len(judged)} clips, {audio_min:.2f} audio min, ${usd:.5f} total · "
+          f"{audio_tokens / audio_min:.0f} audio tokens per min · ${fixed_usd:.6f} fixed per clip")
+    print("Projected $ per audio min (% of the $0.003 ceiling): " + ", ".join(
+        f"{s} s clip ${audio_usd_per_min + fixed_usd * 60 / s:.5f} ({(audio_usd_per_min + fixed_usd * 60 / s) / 0.003:.0%})"
+        for s in (30, 60, 180)))
     print(f"API seconds per clip: median {call_s[len(call_s) // 2]:.1f}, max {call_s[-1]:.1f}")
 
     if scores := score(rows):

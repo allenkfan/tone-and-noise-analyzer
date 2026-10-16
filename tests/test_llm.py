@@ -143,7 +143,7 @@ def test_dev_runner_scores_a_labeled_folder(fake, batch_dir, monkeypatch, tmp_pa
     llm.main([str(batch_dir), "--workers", "1", "--out", str(tmp_path / "out")])
     out = capsys.readouterr().out
     assert "3 judged, 1 failed" in out  # corrupt.wav fails to decode
-    assert "per audio min" in out and "emotional_tone" in out
+    assert "Projected" in out and "emotional_tone" in out
     lines = (tmp_path / "out" / f"{llm.MODEL}.jsonl").read_text().splitlines()
     assert len(lines) == 4
 
