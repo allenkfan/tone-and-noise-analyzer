@@ -146,7 +146,7 @@ Both Spaces were created on 2026-10-16. They are public Docker Spaces on CPU Bas
 
 | Space | Purpose | App URL |
 | --- | --- | --- |
-| [tone-and-noise-analyzer-dev](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev) | deploy every change here first | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space |
+| [tone-and-noise-analyzer-dev](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev) | staging; **frozen during evaluation** as the experimental alternative `v1.1-speech-emotion` (`57eeafc`, CPU Upgrade, never sleeps). Use a new staging Space until evaluation ends | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space |
 | [tone-and-noise-analyzer](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer) | the URL you submit; release `v1.1` (build `fca3129`) on CPU Upgrade, never sleeps, Gemini key set | https://allen-videolytics-tone-and-noise-analyzer.hf.space |
 
 The YAML front matter at the top of `README.md` is the Space configuration (`sdk: docker`, `app_port: 7860`). GitHub shows it as a small table. To change a secret, use the Space's **Settings → Variables and secrets** page, or `HfApi().add_space_secret(repo_id, key, value)`. Changing a secret restarts the Space.

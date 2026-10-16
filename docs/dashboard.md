@@ -4,10 +4,12 @@ The dashboard takes a batch of call recordings plus a CSV manifest and returns o
 
 | Dashboard | URL | What runs there |
 | --- | --- | --- |
-| Test | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space | the latest build under test |
+| Experimental alternative (not the submission) | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space | `v1.1-speech-emotion` (build `57eeafc`): v1.1 plus a local speech-emotion model; frozen |
 | Submission | https://allen-videolytics-tone-and-noise-analyzer.hf.space | the frozen release for evaluation (`v1.1`, build `fca3129`) |
 
-Both dashboards run the full model: local acoustic and overlap models plus the Gemini audio judge at temperature 0. The submission dashboard is frozen at release `v1.1` (build `fca3129`). The test dashboard gets new builds first, so its answers can change with every deploy.
+Both dashboards run the full model: local acoustic and overlap models plus the Gemini audio judge at temperature 0. The submission dashboard is frozen at release `v1.1` (build `fca3129`). It is the system submitted for evaluation.
+
+The experimental dashboard runs `v1.1-speech-emotion` (tag and branch `ser`, build `57eeafc`), with the same login. It adds a local speech-emotion model (WavLM arousal and valence) that scores the customer's turns, fused with the Gemini judge. It was tested but **not selected**: on the three example calls it matched v1.1 on tone (0/3) and didn't improve intensity, at about 6× the latency and about 1.6× the Gemini cost. It's offered for comparison only. See the technical memo's follow-ups.
 
 ## 1. Sign in
 
