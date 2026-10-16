@@ -45,7 +45,7 @@ call_002.mp3,
 
 Use **one** of the two tabs:
 
-- **Folder:** choose the batch folder. Your browser may ask you to confirm uploading all the files in it.
+- **Folder:** click the upload box and pick the batch folder in the dialog. Every file in it is uploaded, and your browser may ask you to confirm. Dragging the folder itself onto the box doesn't work, because the box receives only the folder, not its contents. To drag, select the files *inside* the folder and drag those.
 - **ZIP:** upload a `.zip` of the folder. A top-level folder inside the ZIP is fine, and macOS `__MACOSX` and dot-files are ignored.
 
 If you fill in both tabs, the ZIP is used.
