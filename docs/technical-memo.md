@@ -11,10 +11,11 @@ Headline numbers for the LLM half:
 | | Value | Source |
 | --- | --- | --- |
 | Tone accuracy / macro-F1, held-out acted speech | 0.377 / 0.325 (chance 0.20) | CREMA-D test split, 300 clips, scored once |
+| Tone on the 3 real example calls | 0 of 3 (intensity 0 of 3, overlap 1 of 3); the placeholder baseline got 1 of 3 | build 65c77a6 on the test dashboard; calls not used for tuning |
 | API cost per audio minute | $0.00059 at 3-minute calls, $0.00124 at 30-second calls (20% and 41% of the $0.003 ceiling) | measured on 603 clips |
 | API latency | median 1.4 s per short clip; 1.8 to 3.0 s per real call (31 to 172 s long), about 1.8 s per audio minute | measured |
 
-Tone accuracy is the weak point, and section 4 explains why: the model reads emotion mainly from the words, and barely from the voice. Section 9 lists the follow-ups that address it.
+Tone accuracy is the weak point: on the three real calls the hybrid scores lower on tone than the constant placeholder. Section 4 explains why: the model reads emotion mainly from the words, and barely from the voice. Section 9 lists the follow-ups that address it.
 
 ## 2. Approaches considered
 
