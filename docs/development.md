@@ -44,6 +44,7 @@ Set `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` in `private/.env`. The app won
 │   ├── schema.py          # output schema with the exact enum values from the brief
 │   ├── audio.py           # ffmpeg decode → float32, 16 kHz, channels kept
 │   ├── pipeline.py        # analyze(samples, sr) -> Result   ← model work goes here
+│   ├── llm.py             # Gemini judge: tone, intensity, noise type, overlap; dev runner
 │   ├── manifest.py        # folder/ZIP collection, lenient CSV parsing, validation report
 │   ├── batch.py           # per-file runner shared by the app and the CLI; CSV writer
 │   └── metrics.py         # per-field accuracy, tone macro-F1, confusion matrix
@@ -105,6 +106,19 @@ uv run pytest
 Tests generate their own audio. This repo is public, so real calls never go in `tests/`.
 
 The three labeled calls are a smoke test, not a validation set. Don't tune thresholds to them. Validation needs held-out data that is independent of what you tune on.
+
+### The LLM judge
+
+`src/analyzer/llm.py` sends each clip to Gemini (`gemini-3.5-flash-lite`) for tone, intensity, noise type and overlap. It needs a paid-tier key (the free tier's terms let Google use the content): put `GEMINI_API_KEY=...` in `private/.env` locally, and add the same secret to both Spaces. Without a key, every clip takes the fallback (neutral tone, confidence 0.2) and nothing fails, so after a deploy check the logs for `llm` lines.
+
+```sh
+python3 private/tools/make_val_tone.py                                         # CREMA-D tone set → private/data/val/tone/{tune,test}
+uv run python -m analyzer.llm private/data/val/tone/tune                       # accuracy, confusion, cost, latency for the LLM fields
+uv run python -m analyzer.llm private/data/val/tone/tune --fit-calibration     # prints CALIBRATION points for llm.py
+uv run python -m analyzer.llm private/data/val/tone/tune --model gemini-3.6-flash
+```
+
+Tune prompts on `tune/` only, and bump `PROMPT_VERSION` whenever the prompt changes. Score `test/` once, at the end. Each run writes per-clip judgements with token counts and cost to `out/llm/<model>.jsonl`. The reasoning behind the current settings and the measured results are in [technical-memo.md](technical-memo.md).
 
 ## Loop 1b: working on the dashboard
 
@@ -190,6 +204,7 @@ The same call works against `http://127.0.0.1:7860` for a local run.
 
 ## Before submission and during evaluation
 
+- [ ] Set `GEMINI_API_KEY` as a secret on the submission Space. Without it every clip silently takes the fallback.
 - [ ] Upgrade the submission Space's hardware to CPU Upgrade (8 vCPU, 32 GB, $0.03/hr) and set its sleep time to never. CPU Basic Spaces pause when idle.
 - [ ] Give evaluators the direct URL, https://allen-videolytics-tone-and-noise-analyzer.hf.space. The login cookie fails when the app is embedded in the huggingface.co Space page.
 - [ ] Tag the release: `git tag v1.0 && git push origin v1.0`. `uv.lock` pins every dependency.

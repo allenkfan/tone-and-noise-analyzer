@@ -28,3 +28,4 @@ Requires [uv](https://docs.astral.sh/uv/) and ffmpeg. Audio, labels and credenti
 
 - [docs/dashboard.md](docs/dashboard.md): how to use the hosted dashboard (sign in, batch format, results, troubleshooting)
 - [docs/development.md](docs/development.md): the development and deployment workflow
+- [docs/technical-memo.md](docs/technical-memo.md): approaches tested, architecture, validation, cost, latency and the external API disclosure
