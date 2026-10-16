@@ -29,7 +29,9 @@ TAGGER = Weights("pranjal-pravesh/PANNs_CNN14_ONNX", "bafe3efef3ea1ea7577ee915ac
                  ("Cnn14_16k.onnx", "Cnn14_16k.onnx.data"))  # PANNs CNN14 16 kHz, AudioSet, MIT
 DNSMOS = Weights("TigreGotico/dnsmos-onnx", "27691a53aa069b27be6ac957013d43b3c442da9d",
                  ("sig_bak_ovr.onnx",))  # Microsoft DNSMOS P.835, MIT
-ALL = (VAD, TAGGER, DNSMOS)
+SEGMENTATION = Weights("onnx-community/pyannote-segmentation-3.0", "733a93b6473d019a773298e08cefa686894b1854",
+                       ("onnx/model.onnx",))  # pyannote segmentation-3.0, MIT
+ALL = (VAD, TAGGER, DNSMOS, SEGMENTATION)
 
 if __name__ == "__main__":
     for w in ALL:

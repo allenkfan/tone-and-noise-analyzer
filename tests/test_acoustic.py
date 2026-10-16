@@ -37,6 +37,7 @@ def fake_vad(monkeypatch):
 def acoustics(**overrides) -> Acoustics:
     base = dict(duration_s=30.0, speech_ratio=0.6, longest_silence_s=2.0, snr_db=40.0, clipping_ratio=0.0,
                 bandwidth_hz=4000.0, rms_dbfs=-22.0, noise_tags=[], long_silence_present=False,
+                speaker_overlap_present=False, overlap_ratio=0.0, overlap_longest_s=0.0,
                 audio_quality="clear", background_noise_present=False, background_noise_severity="none",
                 noise_type_guess="", noise_floor_dbfs=-70.0, floor_snr_db=40.0, peak_spread_db=5.0, dropouts_per_min=0.0, mos_sig=3.5,
                 mos_bak=4.0, mos_ovr=3.0)
@@ -143,6 +144,7 @@ def test_measure_runs_the_real_models_on_short_and_silent_audio():
         assert 0 <= ac.speech_ratio <= 1
         assert 1 <= ac.mos_sig <= 5.5
         assert all(g in acoustic.GROUPS for g, _ in ac.noise_tags)
+        assert 0 <= ac.overlap_ratio <= 1 and not ac.speaker_overlap_present
 
 
 def test_hiss_is_not_speech_and_is_tagged_as_noise():
@@ -170,11 +172,34 @@ def test_merge_takes_physical_fields_from_acoustics_and_the_rest_from_the_llm():
     ac = acoustics(background_noise_present=True, background_noise_severity="medium",
                    noise_type_guess="TV or radio", audio_quality="slightly_impaired", long_silence_present=True)
     r = pipeline.merge(ac, judgement())
-    assert (r.emotional_tone, r.emotional_intensity, r.speaker_overlap_present, r.confidence) == \
-        ("frustrated", "medium", True, 0.7)
+    assert (r.emotional_tone, r.emotional_intensity, r.confidence) == ("frustrated", "medium", 0.7)
     assert (r.background_noise_present, r.background_noise_severity, r.background_noise_type) == \
         (True, "medium", "television")
     assert r.audio_quality == "slightly_impaired" and r.long_silence_present
+
+
+def test_overlap_comes_from_acoustics_not_the_llm():
+    assert pipeline.merge(acoustics(speaker_overlap_present=True), judgement(speaker_overlap_present=False)) \
+        .speaker_overlap_present
+    assert not pipeline.merge(acoustics(), judgement(speaker_overlap_present=True)).speaker_overlap_present
+
+
+def test_overlap_needs_a_sustained_stretch():
+    brief = acoustics(overlap_ratio=0.02, overlap_longest_s=0.3)  # a backchannel
+    sustained = acoustics(overlap_ratio=0.1, overlap_longest_s=2.5)
+    acoustic.decide(brief), acoustic.decide(sustained)
+    assert not brief.speaker_overlap_present and sustained.speaker_overlap_present
+
+
+def test_overlap_stats_bridge_flicker_and_measure_the_longest_run():
+    speech = np.ones(1000)
+    overlap = np.zeros(1000)
+    overlap[100:160] = 0.9
+    overlap[163:220] = 0.9  # a 3-frame dip inside the same overlap
+    overlap[500:510] = 0.9
+    ratio, longest = acoustic.overlap_stats(speech, overlap)
+    assert longest == pytest.approx(120 * acoustic.SEG_FRAME / SR)
+    assert ratio == pytest.approx(130 / 1000)
 
 
 def test_merge_keeps_noise_type_consistent_with_presence():
@@ -189,6 +214,6 @@ def test_analyze_falls_back_when_the_llm_is_unavailable(monkeypatch, caplog):
 
     monkeypatch.setattr(llm, "judge", down)
     r = pipeline.analyze(np.stack([noise(3, -40)]), SR)
-    assert (r.emotional_tone, r.emotional_intensity, r.speaker_overlap_present) == ("neutral", "low", False)
+    assert (r.emotional_tone, r.emotional_intensity) == ("neutral", "low")
     assert r.confidence == pipeline.FALLBACK_CONFIDENCE
     assert sum("fallback" in m for m in caplog.messages) == 1

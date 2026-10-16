@@ -15,8 +15,8 @@ FALLBACK_CONFIDENCE = 0.2
 def analyze(samples: np.ndarray, sr: int) -> Result:
     """Analyze one clip. `samples` is float32 with shape (channels, n) at `sr` Hz.
 
-    Silence, quality and noise presence and severity come from `acoustic`. Tone, intensity,
-    noise type, overlap and confidence come from `llm`; without it they fall back to defaults.
+    Silence, overlap, quality and noise presence and severity come from `acoustic`. Tone,
+    intensity, noise type and confidence come from `llm`; without it they fall back to defaults.
     """
     ac = acoustic.measure(samples, sr)
     try:
@@ -39,7 +39,7 @@ def merge(ac: acoustic.Acoustics, judgement: llm.Judgement | None) -> Result:
         background_noise_type=noise_type,
         background_noise_severity=ac.background_noise_severity,
         audio_quality=ac.audio_quality,
-        speaker_overlap_present=judgement.speaker_overlap_present if judgement else False,
+        speaker_overlap_present=ac.speaker_overlap_present,  # measured; the LLM never reported overlap
         long_silence_present=ac.long_silence_present,
         confidence=judgement.confidence if judgement else FALLBACK_CONFIDENCE,
     )
