@@ -22,7 +22,7 @@ Tone accuracy is the weak point: on the three real calls the hybrid scores lower
 | Approach | What it is | Outcome |
 | --- | --- | --- |
 | Placeholder baseline | Every field "nothing detected", confidence 0 | Floor: tone accuracy 0.33 and macro-F1 0.17 on the 3 example calls |
-| A. Deterministic per-field measurements, no tone model | Silence, quality, noise presence and severity from signal measurements | Kept for the physical fields **(acoustic: results)** |
+| A. Deterministic per-field measurements, no tone model | Silence, quality, noise presence and severity from signal measurements | Kept for the physical fields: on a 300-clip synthetic test split, silence 0.95, noise presence 0.92, quality 0.84, severity 0.73; 11 of 12 physical answers right on the example calls (section 4.2) |
 | B. Audio LLM end to end | One Gemini call returns every field | Not used alone: the brief scores quality and noise separately and warns against inferring noise from poor quality; measurements are more reliable for those |
 | **C. Hybrid (selected)** | A for the physical fields, the LLM only for the four subjective fields, with A's measurements in the prompt | Selected: best available accuracy on every field without new model training, inside the cost ceiling |
 | D. Local ASR + text model + speech-emotion model | faster-whisper transcript, text sentiment, emotion2vec, small fusion classifier | Not built; 2 to 3 days and needs call-like training data. Part of it is follow-up 1 |
@@ -53,7 +53,12 @@ audio file ──ffmpeg──► float32, 16 kHz
 - **Thinking** is held at the model's minimum (`minimal`). Thought tokens bill as output at $2.50 per million and would dominate the cost.
 - **Reliability.** 90 s timeout; up to 3 attempts with exponential backoff on timeouts, 408, 429 and 5xx; one retry if the reply fails the schema. Any remaining failure raises `LLMUnavailable`, and `pipeline.analyze` falls back to neutral tone, low intensity, no overlap, the acoustic noise-type guess and confidence 0.2. After 3 consecutive failures, a breaker skips the API for 120 s, so a batch during an outage finishes in seconds instead of waiting out every timeout. With no API key configured, the app starts and runs entirely on the fallback.
 
-**(acoustic: the measurements, the noise tagger, and how `pipeline.analyze` merges and sets the final confidence.)**
+`acoustic.measure` (`src/analyzer/acoustic.py`), all on the CPU through onnxruntime, with weights pinned by commit hash and downloaded at image build time:
+
+- **Voice activity.** Silero VAD (MIT) gives a speech mask per 32 ms frame with hysteresis and minimum-duration rules. The mask drives everything else: the longest non-speech run (`long_silence_present` at 11 s or more), active speech level, and which frames count as pauses.
+- **Noise.** A speech-to-noise ratio from the pause energy (median, so a ringback tone doesn't dominate) and a minimum-statistics floor under speech, which still sees noise that call-side suppression mutes in the pauses. A PANNs CNN14 tagger (MIT, AudioSet's 527 classes) runs on consecutive 10 s windows; its classes are mapped to about 35 plain-word noise groups (TV or radio, music, keyboard typing, static, road noise, and so on), with the speaker's own voice, telephone signalling and room acoustics mapped to "not noise". Noise is present when the strongest noise group scores 0.25 or more, or the speech-to-noise ratio is under 20 dB, taking the worse of the floor under speech and the pause estimate (the latter only when the pauses are above -50 dBFS). Severity comes from the ratio alone: medium at 18 dB or less, high at 6 dB or less. The top groups go to the LLM as hints for the free-text noise type.
+- **Quality.** Four independent faults, none of which read the noise measures: flattened speech peaks (clipping), bandwidth of the speech spectrum, active speech level, and short dropouts inside speech (packet loss). Any severe fault, or two slight ones, is severely impaired. DNSMOS P.835 is also computed and passed to the LLM, but no rule uses it.
+- **Merge.** `pipeline.analyze` takes silence, quality, noise presence and severity from the measurements, and tone, intensity, noise type and overlap from the LLM. If the measurements say no noise, the type is an empty string regardless of the LLM. Confidence is the LLM's calibrated value (section 4.3), or 0.2 on the fallback path.
 
 ## 4. Validation
 
@@ -114,11 +119,51 @@ The test result matches tune (0.390 / 0.356), so tuning didn't overfit; there wa
 - **Stability:** at the models' default temperature, the same call changed tone between repeats in 5 of 9 model-call pairs. This argues for testing a temperature of 0.
 - **Overlap:** never detected (0 of 27 answers), although two calls are labeled with overlap.
 
-**Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. **(acoustic: the synthetic set for overlap and noise.)**
+**Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. The synthetic two-speaker set in section 4.2 has overlap in 30% of clips and noise with a known source class in 60%, but it was used only to tune the measurements; the LLM was not run on it because of cost, so overlap and noise type are validated only on the example calls (overlap 1 of 3, noise type right on 1 of 2 noisy calls; `docs/example-calls-results.md`).
 
 ### 4.2 Physical fields
 
-**(acoustic: synthetic construction, metrics, results.)**
+**Data.** No labeled call corpus covers silence, quality and noise, so we built one where every label comes from construction. `private/tools/make_val_physical.py` (seed 20261016) makes two-actor conversations of 20 to 50 s from CREMA-D sentences, then adds, independently of each other: a long gap of 11 to 20 s in 25% of clips (3 to 7 s pauses in another 30% as hard negatives); overlapping turns in 30%; background noise in 60% (ESC-50 events, MUSAN music and ambience, babble, a TV-like mix, generated hiss, hum and crackle) at 20, 10, 5 or 0 dB speech-to-noise, labeled low, medium, medium, high; and a quality tier (clear 50%, slightly impaired 30%, severely impaired 20%) from low level, clipping, low-pass, low-bitrate Opus or dropped frames. Every clip then passes a comfort-noise floor 40 to 55 dB under speech (labeled no noise) and either wideband Opus or a G.711 telephone band, both labeled clear. 300 tune and 300 test clips (3.5 hours each), split by CREMA-D actor, ESC-50 fold and MUSAN file. Audio is not committed; the generator rebuilds it from the seed.
+
+**Method.** Thresholds were set by coordinate descent per field on the tune split, scoring from cached measurements, ties going to the middle of the best plateau; two values (the tag threshold, 0.12 to 0.25, and the pause-floor gate, -70 to -50 dBFS) were then moved along flat stretches of the curve, within 0.01 of the best tune accuracy, for more margin against false noise. The test split was measured and scored once. The three example calls were not used to set any threshold; one observation from call_001 (a mild clipping signature on a call labeled clear) informed how strong the synthetic clipping tier is.
+
+**Results, test split, 300 clips.**
+
+| Field | Accuracy |
+| --- | --- |
+| long_silence_present | 0.950 |
+| background_noise_present | 0.917 |
+| audio_quality | 0.837 |
+| background_noise_severity | 0.733 |
+
+Quality never flags a clean clip (152 of 152 clear clips predicted clear). The errors are: quality, slightly impaired called clear (26 of 97), 22 of them low-bitrate Opus, which no measure detects; noise presence, 18 misses of 190 noisy clips (10 at the faintest 20 dB tier, 6 at 10 dB) and 7 false alarms on clean clips from music, household, animal and bird tags; severity, medium called low (23 of 110), 18 of them intermittent ESC-50 events such as barks and knocks, because both speech-to-noise estimates use a median or a minimum and so measure the quiet between events (speech-like noise such as TV has the same effect: it reads as speech); silence, 11 false positives, 8 of them under 0 to 5 dB noise where the VAD loses the foreground speech, and 4 misses where a TV or babble background keeps the VAD on through the gap.
+
+Confusion matrices (rows: label, columns: prediction):
+
+| Silence | false | true |
+| --- | --- | --- |
+| false | 215 | 11 |
+| true | 4 | 70 |
+
+| Quality | clear | slightly_impaired | severely_impaired |
+| --- | --- | --- | --- |
+| clear | 152 | 0 | 0 |
+| slightly_impaired | 26 | 62 | 9 |
+| severely_impaired | 5 | 9 | 37 |
+
+| Noise present | false | true |
+| --- | --- | --- |
+| false | 103 | 7 |
+| true | 18 | 172 |
+
+| Severity | none | low | medium | high |
+| --- | --- | --- | --- | --- |
+| none | 103 | 7 | 0 | 0 |
+| low | 10 | 25 | 5 | 0 |
+| medium | 8 | 23 | 71 | 8 |
+| high | 0 | 5 | 14 | 21 |
+
+**Real calls.** On the three example calls, 11 of the 12 physical-field answers match the labels. The miss is severity on call_002, whose TV is predicted low and labeled medium, the same medium-to-low pattern as on the synthetic set.
 
 ### 4.3 Confidence calibration
 
@@ -154,7 +199,14 @@ The fixed part dominates short clips. These figures were measured without the ac
 
 ### 5.2 Compute and hosting
 
-**(acoustic: measured compute per audio minute for the measurements, and the hosting assumption.)**
+The measurements run three ONNX models on the CPU (Silero VAD, PANNs CNN14, DNSMOS) plus signal measures. Compute cost per audio minute = hourly rate / 60 × processing time per audio minute, at full utilization:
+
+| Hosting | Rate | Acoustic only (RTF 0.05) | Hybrid, sequential, incl. API wait (RTF 0.085) |
+| --- | --- | --- | --- |
+| Hugging Face Spaces, CPU Upgrade, 8 vCPU | $0.03/h | $0.000026 | $0.00004 |
+| Generic 8 vCPU cloud VM (assumption, about $0.35/h) | $0.35/h | $0.00029 one worker, $0.00007 with four | $0.0005 one worker |
+
+Spaces hosting also carries a fixed $9/month PRO fee, which matters only at low volume (it equals $0.003 per minute at about 3,000 audio minutes a month). The deployed Space bills for uptime, not per batch, so the honest production figure is the cloud-VM row. Total per audio minute for 3-minute calls is therefore about $0.0006 on Spaces and about $0.0011 on a generic VM with one worker, both under the $0.003 ceiling; the API term in section 5.1 dominates and the clip-length caveat there applies to the total.
 
 ## 6. Latency
 
@@ -165,7 +217,17 @@ API seconds per call, measured with 8 calls in flight on the validation sets and
 | CREMA-D, about 2.5 s each (600) | 1.4 s | 2.8 s | n/a (dominated by fixed overhead) |
 | Example calls, 31 to 172 s (3) | 2.2 s | 3.0 s | 1.8 s |
 
-The batch runner processes files one at a time, so a 100-call batch spends about 3 to 4 minutes waiting on the API. **(acoustic: decode and measurement time, end-to-end seconds per audio minute.)**
+The batch runner processes files one at a time, so a 100-call batch spends about 3 to 4 minutes waiting on the API.
+
+Decode and measurement, and the end-to-end figure, measured on call-length clips:
+
+| Where | Seconds per audio minute | Notes |
+| --- | --- | --- |
+| Acoustic only, local Intel i5 laptop | 3.8 | VAD 0.3, tagger 1.4, DNSMOS 1.8 (DNSMOS feeds no rule and is the cheapest cut) |
+| Acoustic only, Spaces CPU Basic, 2 vCPU | 2.6 to 3.1 | real-time factor about 0.05 |
+| Hybrid end to end, Spaces CPU Basic | 4.9 to 5.3 | a 180 s call takes about 14 s; a 60 s call about 6 s |
+
+The first file after a restart adds about 1.1 s of model loading. Very short clips are dominated by per-file overhead (about 0.5 s each warm). A batch of 100 three-minute calls therefore finishes in about 25 minutes on the current single-worker setup.
 
 ## 7. External API disclosure
 
@@ -192,6 +254,10 @@ The batch runner processes files one at a time, so a 100-call batch spends about
 - **Overconfidence:** raw confidence is near 0.9 regardless of correctness. Calibration lowers it, but the calibration was fitted on acted speech.
 - **Short clips** cost more per minute (section 5.1).
 - **Dependency on an external service:** outages, rate limits or price changes affect results. The fallback keeps batches running, but its tone is always neutral.
+- **Severity under intermittent and speech-like noise:** severity is a speech-to-noise ratio from medians and minimums, so the quiet between intermittent events, and TV or babble that reads as speech, both make medium noise look low (section 4.2, and call_002).
+- **Codec and room artifacts:** low-bitrate codec artifacts, echo and reverberation are not detected by any quality rule; the field never over-flags clean audio but misses these impairments.
+- **Long silence is VAD-only:** hold music or ringback past 11 s counts as silence, and heavy noise can hide speech from the VAD and create a false long silence.
+- **Clipping versus limiters:** clipping is read from flattened speech peaks; an aggressive limiter or AGC in the telephony chain can look the same.
 
 **Follow-up improvements, in order of expected gain**
 
