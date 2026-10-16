@@ -21,8 +21,18 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 INSTRUCTIONS = """
 # Tone and Noise Analyzer
-Upload a batch: the audio files plus one CSV manifest with a `name` column (the exact audio filename)
-and an optional `result_json` column. Choose a folder or a ZIP archive, then press **Analyze**.
+Analyzes a batch of call recordings: the audio files plus one CSV manifest with a `name` column
+(the exact audio filename) and an optional `result_json` column.
+
+1. **Upload the batch** in one of the two tabs below.
+   - **Folder:** click the upload box, choose the batch folder in the dialog, and confirm your browser's
+     prompt to upload its files. Dragging the folder itself onto the box doesn't work. To drag, open the
+     folder, select the files *inside* it, and drag those.
+   - **ZIP:** drag a `.zip` of the batch folder onto the box, or click the box to choose it.
+2. **Wait for the upload to finish.** The uploaded files are listed in the box.
+3. **Press Analyze.** Validation, progress and per-file results appear below. Download the results CSV
+   when the batch is done.
+
 Supported audio: WAV, MP3, OGG/Opus, FLAC, M4A/AAC, WebM. Uploaded audio is deleted after processing.
 """
 
@@ -77,9 +87,9 @@ def _table(rows: list[Row]) -> pd.DataFrame:
 with gr.Blocks(title="Tone and Noise Analyzer", delete_cache=(3600, 3600)) as demo:
     gr.Markdown(INSTRUCTIONS)
     with gr.Tab("Folder"):
-        folder = gr.File(file_count="directory", label="Batch folder")
+        folder = gr.File(file_count="directory", label="Batch folder: click to choose a folder")
     with gr.Tab("ZIP"):
-        zipped = gr.File(file_types=[".zip"], label="Batch ZIP")
+        zipped = gr.File(file_types=[".zip"], label="Batch ZIP: drop a .zip here or click to choose one")
     analyze_button = gr.Button("Analyze", variant="primary")
     report = gr.Markdown()
     table = gr.Dataframe(headers=DISPLAY_COLUMNS, interactive=False, wrap=True, label="Results")
