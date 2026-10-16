@@ -11,7 +11,7 @@ Headline numbers for the LLM half:
 | | Value | Source |
 | --- | --- | --- |
 | Tone accuracy / macro-F1, held-out acted speech | 0.377 / 0.325 (chance 0.20) | CREMA-D test split, 300 clips, scored once |
-| Tone on the 3 real example calls | 0 of 3 (overlap 1 of 3; intensity 0 of 3, and 1 to 2 of 3 at temperature 0); the placeholder baseline got 1 of 3 | builds 65c77a6 and be53f5c (release) on the test dashboard; calls not used for tuning |
+| Tone on the 3 real example calls | 0 of 3 (intensity 0 of 3, and 1 to 2 of 3 at temperature 0); the placeholder baseline got 1 of 3. Overlap, now measured: 3 of 3 (the LLM got 1 of 3) | tone on builds 65c77a6 and be53f5c on the test dashboard; overlap measured locally on 6ac18eb; calls not used for tuning |
 | API cost per audio minute | $0.00057 at 3-minute calls, $0.00116 at 30-second calls (19% and 39% of the $0.003 ceiling) | measured with the acoustic context, 300 clips |
 | API latency | median 1.4 s per short clip; 1.8 to 3.0 s per real call (31 to 172 s long), about 1.8 s per audio minute | measured |
 
@@ -121,11 +121,11 @@ The test result matches tune (0.390 / 0.356), so tuning didn't overfit; there wa
 - **What drives the errors:** none of the rationales blamed the background sound or the scene for the customer's emotion. The errors follow the same pattern as on CREMA-D. The model weighs what the customer says above how they say it, so an offensive word said flatly reads as frustration or anger, and polite wording said tensely reads as neutral.
 - **Models:** none of the three got the labeled tone on more than one call, so the stronger models offer no clear gain at their higher price.
 - **Stability:** at the models' default temperature, the same call changed tone between repeats in 5 of 9 model-call pairs. This is why the deployed judge runs at temperature 0 (section 3).
-- **Overlap:** never detected (0 of 27 answers), although two calls are labeled with overlap.
+- **Overlap:** the LLM never reported it (0 of 27 answers), although two calls are labeled with overlap. That is why the field now comes from the overlap detector in the measurements (section 4.2).
 - **Release build at temperature 0** (be53f5c, two runs on the test dashboard): tone still 0 of 3; the call labeled satisfied now reads frustrated rather than neutral; intensity 2 of 3, then 1 of 3.
 - **Prompt v6** (9bc2bf5, two runs on the test dashboard): tone 0 of 3 and intensity 1 of 3, with identical tone and intensity in both runs; the crackle on the third call is now named "static"; other fields unchanged.
 
-**Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. The synthetic two-speaker set in section 4.2 has overlap in 30% of clips and noise with a known source class in 60%, but it was used only to tune the measurements; the LLM was not run on it because of cost, so the LLM's overlap and noise type are validated only on the example calls (overlap 1 of 3, noise type right on 1 of 2 noisy calls; `docs/example-calls-results.md`). Overlap now comes from the measurements and is validated on the synthetic set in section 4.2.
+**Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: the LLM said no overlap on all 600 clips. No call-like data with overlap or noise-type labels exists here. The synthetic two-speaker set in section 4.2 has overlap in 30% of clips and noise with a known source class in 60%, but it was used only to tune the measurements; the LLM was not run on it because of cost, so the LLM's overlap and noise type are validated only on the example calls (overlap 1 of 3, noise type right on 1 of 2 noisy calls; `docs/example-calls-results.md`). Because the LLM never reported overlap, the field now comes from the detector in the measurements: 0.787 on the synthetic test split (section 4.2) and 3 of 3 on the example calls.
 
 ### 4.2 Physical fields
 
