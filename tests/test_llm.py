@@ -11,7 +11,10 @@ from analyzer import llm
 from analyzer.schema import TONES
 
 SR = 16_000
-ANSWER = {"rationale": "The caller sighs and repeats the refund request.", "tone": "frustrated", "intensity": "medium", "noise": "Television ", "overlap": True, "confidence": 0.7}
+ANSWER = {"rationale": "The caller sighs and repeats the refund request.", "tone": "frustrated", "intensity": "medium",
+          "noise": "Television ", "overlap": True, "confidence": 0.7,
+          "customer_turns": [{"start": 1.5, "end": 0.5}, {"start": 0.2, "end": 1.0}, {"start": 1.2, "end": 9.0}],
+          "words_sentiment": "negative"}
 
 
 def usage(audio=960, text=600, output=80, thoughts=0):
@@ -77,6 +80,8 @@ def test_judge_parses_answer_and_costs_it(fake, clip):
     assert (j.emotional_tone, j.emotional_intensity, j.speaker_overlap_present) == ("frustrated", "medium", True)
     assert j.background_noise_type == "television"
     assert j.confidence == 0.7
+    # Turns come back sorted, clipped to the 2 s clip, and empty or reversed ones dropped.
+    assert j.customer_turns == [(0.2, 1.0), (1.2, 2.0)] and j.words_sentiment == "negative"
     spec = llm.MODELS[llm.MODEL]
     expected = (600 * spec.text_usd + 960 * spec.audio_usd + 80 * spec.output_usd) / 1e6
     assert j.usage["usd"] == pytest.approx(expected)
@@ -142,13 +147,14 @@ def test_mono_input_is_accepted(clip):
 
 
 def test_calibration_interpolates(monkeypatch):
-    monkeypatch.setattr(llm, "CALIBRATION", {llm.MODEL: [(0.0, 0.2), (1.0, 0.6)]})
-    assert llm.calibrate(0.5) == pytest.approx(0.4)
-    assert llm.calibrate(0.5, "gemini-3.8-flash") == 0.5
+    monkeypatch.setattr(llm, "CALIBRATION", {(llm.MODEL, "v6"): [(0.0, 0.2), (1.0, 0.6)]})
+    assert llm.calibrate(0.5, version="v6") == pytest.approx(0.4)
+    assert llm.calibrate(0.5, "gemini-3.8-flash", "v6") == 0.5
+    assert llm.calibrate(0.5, version="v7") == 0.5  # keyed by prompt version too
 
 
 def test_default_model_is_calibrated(fake, clip, monkeypatch):
-    monkeypatch.setattr(llm, "CALIBRATION", {llm.MODEL: [(0.5, 0.1), (1.0, 0.3)]})
+    monkeypatch.setattr(llm, "CALIBRATION", {(llm.MODEL, llm.PROMPT_VERSION): [(0.5, 0.1), (1.0, 0.3)]})
     fake(ANSWER)
     j = llm.judge(clip, SR)
     assert j.confidence == pytest.approx(0.18) and j.usage["raw_confidence"] == 0.7

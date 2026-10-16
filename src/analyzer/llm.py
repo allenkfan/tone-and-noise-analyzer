@@ -23,6 +23,8 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
+from typing import Literal
+
 from pydantic import BaseModel, Field, ValidationError
 
 from analyzer.schema import EmotionalTone, Intensity
@@ -30,7 +32,7 @@ from analyzer.schema import EmotionalTone, Intensity
 log = logging.getLogger("analyzer")
 
 MODEL = "gemini-3.5-flash-lite"
-PROMPT_VERSION = "v6"
+PROMPT_VERSION = "v7"  # v6 plus customer turns and the words' sentiment, after the labels
 
 REQUEST_TIMEOUT_SECONDS = 90
 HTTP_ATTEMPTS = 3  # per call, on timeouts, 408, 429 and 5xx
@@ -70,8 +72,8 @@ MODELS: dict[str, ModelSpec] = {
 # accuracy, as (raw, calibrated) points. Fitted with --fit-calibration on the CREMA-D
 # tune split (300 clips, prompt v6, temperature 0, with the acoustic context); points backed by
 # fewer than 5 clips are merged into their neighbour. A model without an entry reports raw confidence.
-CALIBRATION: dict[str, list[tuple[float, float]]] = {
-    "gemini-3.5-flash-lite": [(0.8, 0.2), (0.85, 0.308), (0.9, 0.378), (0.95, 0.406), (1.0, 0.406)],
+CALIBRATION: dict[tuple[str, str], list[tuple[float, float]]] = {
+    ("gemini-3.5-flash-lite", "v6"): [(0.8, 0.2), (0.85, 0.308), (0.9, 0.378), (0.95, 0.406), (1.0, 0.406)],
 }
 
 SYSTEM_PROMPT = """\
@@ -124,7 +126,15 @@ human annotator would choose. Go lower when the customer says little, the emotio
 mixed or borderline between two tones, or the speech is hard to hear.
 
 RATIONALE: one or two sentences: which voice you took as the customer and the main \
-evidence for the tone."""
+evidence for the tone.
+
+After the labels, two more fields:
+CUSTOMER_TURNS: when the customer is speaking, as start and end times in seconds from the \
+start of the recording, in order. Join turns less than 2 seconds apart, leave out the \
+agent's speech and short backchannels, and give at most 20 intervals.
+WORDS_SENTIMENT: the sentiment of the customer's words alone, as if read from a \
+transcript: positive (thanks, praise, relief), neutral (routine requests and answers), \
+negative (complaints, dissatisfaction) or hostile (insults, swearing, threats)."""
 
 USER_PROMPT = "Label this call."
 
@@ -148,11 +158,18 @@ class Judgement:
     confidence: float  # 0..1, calibrated when CALIBRATION is set
     rationale: str  # one or two sentences, logged at DEBUG, never written to the CSV
     usage: dict = field(default_factory=dict)  # tokens, estimated USD, seconds
+    customer_turns: list[tuple[float, float]] = field(default_factory=list)  # seconds, as the model heard them
+    words_sentiment: str = ""  # positive | neutral | negative | hostile
 
 
 # The response schema. Rationale comes first so the model states its evidence before the
 # labels: without it, tone accuracy on the tune split fell from 0.39 to 0.28-0.34 (prompts
 # v3 to v5, paired McNemar p <= 0.015). Keys are short because output tokens cost 8x input.
+class _Turn(BaseModel):
+    start: float = Field(ge=0.0)
+    end: float = Field(ge=0.0)
+
+
 class _Answer(BaseModel):
     rationale: str
     tone: EmotionalTone
@@ -160,6 +177,9 @@ class _Answer(BaseModel):
     noise: str
     overlap: bool
     confidence: float = Field(ge=0.0, le=1.0)
+    # After the labels, so the labels come out as in v6.
+    customer_turns: list[_Turn] = Field(max_length=20)
+    words_sentiment: Literal["positive", "neutral", "negative", "hostile"]
 
 
 def api_key() -> str:
@@ -196,12 +216,15 @@ def judge(samples: np.ndarray, sr: int, acoustics: dict | None = None, *, model:
     log.info("llm %s: %d audio tokens, %d output tokens, $%.5f, %.1f s",
              model, usage["audio_tokens"], usage["output_tokens"], usage["usd"], seconds)
     log.debug("llm rationale: %s", answer.rationale)
+    duration = (samples.shape[-1]) / sr
+    turns = sorted((min(t.start, duration), min(t.end, duration)) for t in answer.customer_turns)
+    turns = [(round(a, 2), round(b, 2)) for a, b in turns if b > a]
     return Judgement(answer.tone, answer.intensity, noise_type, answer.overlap,
-                     calibrate(answer.confidence, model), answer.rationale, usage)
+                     calibrate(answer.confidence, model, PROMPT_VERSION), answer.rationale, usage, turns, answer.words_sentiment)
 
 
-def calibrate(raw: float, model: str = MODEL) -> float:
-    return calibrate_with(CALIBRATION.get(model, []), raw)
+def calibrate(raw: float, model: str = MODEL, version: str = PROMPT_VERSION) -> float:
+    return calibrate_with(CALIBRATION.get((model, version), []), raw)
 
 
 def calibrate_with(points: list[tuple[float, float]], raw: float) -> float:
@@ -410,6 +433,9 @@ def _judge_item(item, model: str, with_acoustics: bool, with_ser: bool = False, 
                 context = (context or {}) | {"ser": voice.as_context()}
         j = judge(samples, SAMPLE_RATE, context, model=model)
         j.usage["ser"] = voice.as_context() if voice else None
+        if with_ser and j.customer_turns:
+            customer = ser.measure(samples, SAMPLE_RATE, j.customer_turns)
+            j.usage["ser_customer"] = customer.as_context() if customer else None
     except Exception as exc:
         return Row(item.name, "failed", f"{type(exc).__name__}: {exc}", label=item.label), None
     physical = {k: (item.label or {}).get(k, v) for k, v in PHYSICAL_DEFAULTS.items()}
@@ -508,31 +534,39 @@ def main(argv: list[str] | None = None) -> None:
     if args.ser:
         from analyzer import ser
 
-        fused = []
-        for row, j in judged:
-            voice = ser.SER(**j.usage["ser"]) if j.usage.get("ser") else None
-            tone, intensity, rule = ser.fuse(j.emotional_tone, j.emotional_intensity, voice)
-            fused.append((row, replace(row, result=row.result.model_copy(
-                update={"emotional_tone": tone, "emotional_intensity": intensity})), rule))
-        if fused_scores := score([f for _, f, _ in fused]):
-            print("\nFused with the voice's arousal (experiment 2): tone accuracy "
-                  f"{fused_scores.accuracy.get('emotional_tone', 0):.3f}, macro-F1 {fused_scores.tone_macro_f1:.3f}, "
-                  f"intensity accuracy {fused_scores.accuracy.get('emotional_intensity', 0):.3f}")
-            print("Rules: " + ", ".join(f"{r} {sum(x == r for *_, x in fused)}" for r in ("raised", "kept", "llm")))
-            print(fused_scores.to_markdown().split("Tone confusion")[1])
+        def voice_of(j, customer):
+            v = (j.usage.get("ser_customer") if customer else None) or j.usage.get("ser")
+            return ser.SER(**v) if v else None
+
+        print("\nSentiment of the words: " + ", ".join(
+            f"{w} {sum(j.words_sentiment == w for _, j in judged)}" for w in ("positive", "neutral", "negative", "hostile")))
+        for name, customer, guard in (("all speech", False, False), ("customer turns", True, False),
+                                      ("customer turns + positive-words guard", True, True)):
+            fused = []
+            for row, j in judged:
+                tone, intensity, rule = ser.fuse(j.emotional_tone, j.emotional_intensity, voice_of(j, customer),
+                                                 j.words_sentiment, guard=guard)
+                fused.append((replace(row, result=row.result.model_copy(
+                    update={"emotional_tone": tone, "emotional_intensity": intensity})), rule))
+            if fused_scores := score([f for f, _ in fused]):
+                print(f"\nFused, arousal over {name}: tone accuracy "
+                      f"{fused_scores.accuracy.get('emotional_tone', 0):.3f}, macro-F1 {fused_scores.tone_macro_f1:.3f}, "
+                      f"intensity accuracy {fused_scores.accuracy.get('emotional_intensity', 0):.3f} · rules: "
+                      + ", ".join(f"{r} {sum(x == r for _, x in fused)}" for r in ("raised", "guarded", "kept", "llm")))
+                print(fused_scores.to_markdown().split("Tone confusion")[1])
 
     toned = [(row.label["emotional_tone"] == j.emotional_tone, j) for row, j in judged
              if row.label and "emotional_tone" in row.label]
     if toned:
         correct = [c for c, _ in toned]
         print(f"\nTone ECE (10 bins): {calibration_error([j.confidence for _, j in toned], correct):.3f} "
-              f"on the reported confidence{' (calibrated)' if args.model in CALIBRATION else ''}")
+              f"on the reported confidence{' (calibrated)' if (args.model, PROMPT_VERSION) in CALIBRATION else ''}")
         if args.fit_calibration:
             raw = [j.usage["raw_confidence"] for _, j in toned]
             points = fit_calibration(raw, correct)
             fitted = [calibrate_with(points, r) for r in raw]
             print(f"In-sample ECE after fitting: {calibration_error(fitted, correct):.3f}")
-            print(f"CALIBRATION = {points}")
+            print(f"CALIBRATION[({args.model!r}, {PROMPT_VERSION!r})] = {points}")
 
 
 if __name__ == "__main__":

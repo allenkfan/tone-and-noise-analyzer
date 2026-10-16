@@ -17,8 +17,8 @@ def analyze(samples: np.ndarray, sr: int) -> Result:
 
     Silence, overlap, quality and noise presence and severity come from `acoustic`. Tone,
     intensity, noise type and confidence come from `llm`; without it they fall back to defaults.
-    The voice's arousal from `ser` goes to the LLM as context and then adjusts its tone and
-    intensity (`ser.fuse`).
+    The voice's arousal from `ser`, over all speech, goes to the LLM as context; then the
+    arousal over the customer's turns, as the LLM reports them, adjusts its tone (`ser.fuse`).
     """
     ac = acoustic.measure(samples, sr)
     voice = _voice(samples, sr)
@@ -28,12 +28,14 @@ def analyze(samples: np.ndarray, sr: int) -> Result:
     except llm.LLMUnavailable as exc:
         log.warning("llm unavailable, acoustic fallback: %s", exc)
         judgement = None
+    if voice and judgement and judgement.customer_turns:
+        voice = _voice(samples, sr, judgement.customer_turns) or voice
     return merge(ac, judgement, voice)
 
 
-def _voice(samples: np.ndarray, sr: int) -> "ser.SER | None":
+def _voice(samples: np.ndarray, sr: int, turns: list[tuple[float, float]] | None = None) -> "ser.SER | None":
     try:
-        return ser.measure(samples, sr)
+        return ser.measure(samples, sr, turns)
     except Exception as exc:  # the voice model is optional; the clip still gets an answer
         log.warning("ser unavailable: %s", exc)
         return None
@@ -46,7 +48,7 @@ def merge(ac: acoustic.Acoustics, judgement: llm.Judgement | None, voice: "ser.S
         noise_type = heard or ac.noise_type_guess or "background noise"
     tone, intensity = (judgement.emotional_tone, judgement.emotional_intensity) if judgement else ("neutral", "low")
     if ser.FUSE:
-        tone, intensity, _ = ser.fuse(tone, intensity, voice)
+        tone, intensity, _ = ser.fuse(tone, intensity, voice, judgement.words_sentiment if judgement else "")
     return Result(
         emotional_tone=tone,
         emotional_intensity=intensity,

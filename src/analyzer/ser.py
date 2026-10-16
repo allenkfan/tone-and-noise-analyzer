@@ -29,6 +29,7 @@ SILENT_DBFS = -50.0  # windows quieter than this are skipped
 BATCH = 8
 
 FUSE = True  # apply `fuse` in pipeline.merge; the context line goes to the LLM either way
+GUARD = True  # never raise when the LLM reads the customer's words as positive
 
 # Fusion with the LLM's answer (experiment 2). The voice says how activated the customer is;
 # the LLM, which reads the words, keeps the polarity. Cut points on the 90th percentile of
@@ -54,14 +55,20 @@ class SER:
         return {k: round(v, 3) if isinstance(v, float) else v for k, v in asdict(self).items()}
 
 
-def measure(samples: np.ndarray, sr: int) -> SER | None:
+def measure(samples: np.ndarray, sr: int, turns: list[tuple[float, float]] | None = None) -> SER | None:
     """Score one clip. `samples` is float32 with shape (channels, n) or (n,) at 16 kHz.
 
-    Returns None when no window has sound in it.
+    With `turns` (start, end seconds), only windows inside those stretches are scored, so the
+    summary describes that speaker. Returns None when no window has sound in it.
     """
     if sr != SR:
         raise ValueError(f"ser.measure needs {SR} Hz audio, got {sr}")
-    scores = score_windows(samples.mean(axis=0) if samples.ndim == 2 else samples)
+    mono = samples.mean(axis=0) if samples.ndim == 2 else samples
+    if turns is None:
+        scores = score_windows(mono)
+    else:
+        parts = [score_windows(mono[int(a * SR):int(b * SR)]) for a, b in turns]
+        scores = np.concatenate(parts) if parts else np.zeros((0, 3), np.float32)
     if len(scores) == 0:
         return None
     a, d, v = scores[:, 0], scores[:, 1], scores[:, 2]
@@ -69,8 +76,12 @@ def measure(samples: np.ndarray, sr: int) -> SER | None:
     return SER(len(scores), p(a, 50), p(a, 90), float(a.max()), p(v, 10), p(v, 50), p(d, 50))
 
 
-def fuse(tone: str, intensity: str, ser: SER | None) -> tuple[str, str, str]:
+def fuse(tone: str, intensity: str, ser: SER | None, words_sentiment: str = "",
+         guard: bool | None = None) -> tuple[str, str, str]:
     """Adjust the LLM's (tone, intensity) with the voice's arousal. Returns (tone, intensity, rule).
+
+    With the guard on, positive words block both raises: an activated voice saying thank you
+    is more likely pleased than annoyed.
 
     | LLM tone   | arousal p90 >= AROUSAL_RAISE | >= AROUSAL_UPSET |
     | neutral    | frustrated, medium           | frustrated, medium |
@@ -79,6 +90,8 @@ def fuse(tone: str, intensity: str, ser: SER | None) -> tuple[str, str, str]:
     """
     if ser is None:
         return tone, intensity, "llm"
+    if (GUARD if guard is None else guard) and words_sentiment == "positive":
+        return tone, intensity, "guarded"
     a = ser.arousal_p90
     if tone == "neutral" and a >= AROUSAL_RAISE:
         return "frustrated", "medium", "raised"

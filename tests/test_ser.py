@@ -86,3 +86,19 @@ def test_pipeline_runs_without_the_model(batch_dir):
 
     result = pipeline.analyze(load_audio(batch_dir / "good_1.wav"), SAMPLE_RATE)  # no key, no SER model
     assert result.emotional_tone == "neutral" and result.confidence == pipeline.FALLBACK_CONFIDENCE
+
+
+def test_measure_scores_only_the_given_turns(stub_model):
+    clip = np.concatenate([tone(6, 0.05), tone(6, 0.5)])  # quiet speaker, then a loud one
+    everyone = ser.measure(clip, SR)
+    loud = ser.measure(clip, SR, turns=[(6.0, 12.0)])
+    assert loud.arousal_p50 > everyone.arousal_p50 and loud.windows == 2
+    assert ser.measure(clip, SR, turns=[(1.0, 1.5)]) is None  # shorter than a window
+    assert ser.measure(clip, SR, turns=[]) is None
+
+
+def test_guard_blocks_raises_on_positive_words(monkeypatch):
+    monkeypatch.setattr(ser, "AROUSAL_RAISE", 0.35)
+    assert ser.fuse("neutral", "low", voice(0.8), "positive") == ("neutral", "low", "guarded")
+    assert ser.fuse("neutral", "low", voice(0.8), "positive", guard=False)[0] == "frustrated"
+    assert ser.fuse("neutral", "low", voice(0.8), "negative")[0] == "frustrated"
