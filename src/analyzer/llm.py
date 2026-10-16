@@ -55,10 +55,12 @@ class ModelSpec:
 
 # Paid-tier standard prices, checked 2026-10-16 at ai.google.dev/gemini-api/docs/pricing.
 # Thinking is held at the minimum: thought tokens bill as output and would dominate the cost.
-# Gemini 3 models are meant to run at their default temperature. The 2.5 models are cheaper
+# Gemini 3 models are meant to run at their default temperature; 3.5 Flash-Lite runs at 0, which
+# on the tune split kept accuracy (0.377 vs 0.390, McNemar p = 0.61) and made answers more
+# repeatable. The 2.5 models are cheaper
 # but return 404 "no longer available to new users" for this account's key.
 MODELS: dict[str, ModelSpec] = {
-    "gemini-3.5-flash-lite": ModelSpec(0.30, 0.30, 2.50, {"thinking_level": "minimal"}, None),
+    "gemini-3.5-flash-lite": ModelSpec(0.30, 0.30, 2.50, {"thinking_level": "minimal"}, 0.0),
     # Introductory prices through 2026-12-31; $1.50 in and $7.50 out from 2027-01-01.
     "gemini-3.6-flash": ModelSpec(0.75, 0.75, 3.75, {"thinking_level": "minimal"}, None),
     "gemini-3.8-flash": ModelSpec(0.75, 0.75, 3.75, {"thinking_level": "low"}, None),

@@ -92,6 +92,12 @@ def test_judge_parses_answer_and_costs_it(fake, clip):
     assert request["config"].response_json_schema["properties"]["emotional_tone"]["enum"] == list(TONES)
 
 
+def test_default_model_runs_at_temperature_zero(fake, clip):
+    client = fake(ANSWER)
+    llm.judge(clip, SR)
+    assert client.requests[0]["config"].temperature == 0.0
+
+
 def test_acoustics_go_in_the_prompt_and_no_noise_empties_the_type(fake, clip):
     client = fake(ANSWER)
     acoustics = {"snr_db": None, "noise_tags": [], "background_noise_present": False, "new_key": 1}
