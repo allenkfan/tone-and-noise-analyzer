@@ -106,6 +106,13 @@ The test result matches tune (0.390 / 0.356), so tuning didn't overfit; there wa
 
 **How far this transfers to real calls.** It cuts both ways. Real customers say emotional things, which these models do use, so acted, lexically neutral speech probably understates call accuracy. But the three labeled example calls, which were not used for tuning, scored 0 of 3 on tone. Three clips can't support a number, but they don't contradict the finding.
 
+**Diagnostics on the example calls.** These used the calls only to compare variants that were built elsewhere; nothing was tuned on them. Three models (`gemini-3.5-flash-lite`, `gemini-3.6-flash`, `gemini-3.8-flash`) each ran the deployed prompt three times per call, with the acoustic measurements as context, as in production.
+- **Speaker:** every rationale picked the caller as the customer, not the agent.
+- **What drives the errors:** none of the rationales blamed the background sound or the scene for the customer's emotion. The errors follow the same pattern as on CREMA-D. The model weighs what the customer says above how they say it, so an offensive word said flatly reads as frustration or anger, and polite wording said tensely reads as neutral.
+- **Models:** none of the three got the labeled tone on more than one call, so the stronger models offer no clear gain at their higher price.
+- **Stability:** at the models' default temperature, the same call changed tone between repeats in 5 of 9 model-call pairs. This argues for testing a temperature of 0.
+- **Overlap:** never detected (0 of 27 answers), although two calls are labeled with overlap.
+
 **Overlap and noise type.** CREMA-D clips are single-speaker and clean, so they test only false positives: overlap was predicted false on all 600 clips. No call-like data with overlap or noise-type labels exists here. **(acoustic: the synthetic set for overlap and noise.)**
 
 ### 4.2 Physical fields
@@ -192,7 +199,9 @@ The batch runner processes files one at a time, so a 100-call batch spends about
 3. **Call-like validation data.** MSP-Podcast (natural speech, academic license with an institutional signature) or synthetic two-speaker dialogues with scripted emotions. Acted single sentences can't measure customer identification, lexical cues or overlap.
 4. **Concurrency.** The batch runner is sequential and the API calls are network-bound. A small thread pool (4 to 8 calls in flight, within the paid tier's rate limits) would cut batch time by about that factor.
 5. **Lower the fixed cost for short clips (deferred).** Already tried on the tune split, on branch `llm-cost-v6`, not merged: short response keys plus a one-line acoustic summary in place of the JSON dump cut the fixed cost from about $0.00055 to $0.00035 per clip, with tone accuracy unchanged (0.383 against 0.390, paired McNemar p = 0.87). Dropping the rationale or shortening the definitions brought it to about $0.0002, but tone accuracy fell to 0.28 to 0.34 (p ≤ 0.015). Context caching doesn't apply: Gemini's implicit cache needs a prefix of at least 4,096 tokens on these models, and the prompt is about 900. Below about $0.0003 per clip, the remaining choices are a cheaper model or one call per several clips.
-6. **Re-fit calibration** on call-like data once it exists, and fold the acoustic signals into the final confidence.
+6. **Detect overlap outside the LLM.** The models never report overlap. An overlapped-speech detector (for example pyannote's segmentation model, which has ONNX exports) belongs with the acoustic measurements.
+7. **Test a temperature of 0** on the tune split. Answers currently vary between repeats.
+8. **Re-fit calibration** on call-like data once it exists, and fold the acoustic signals into the final confidence.
 
 ## 10. Reproducing the LLM results
 
