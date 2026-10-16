@@ -20,10 +20,15 @@ ENV PATH="/home/user/app/.venv/bin:$PATH" \
 
 COPY --chown=user pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
+
+# Model weights: download them here so the Space never fetches them at startup. This layer
+# only rebuilds when the pins in weights.py change.
+COPY --chown=user src/analyzer/weights.py /tmp/weights.py
+RUN python /tmp/weights.py
+ENV HF_HUB_OFFLINE=1
+
 COPY --chown=user . .
 RUN uv sync --frozen --no-dev
-
-# Model weights: download them here so the Space never fetches them at startup.
 
 EXPOSE 7860
 CMD ["python", "app.py"]
