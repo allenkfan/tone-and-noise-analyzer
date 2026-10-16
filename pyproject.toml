@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Emotional tone and background-noise analysis for call audio"
 requires-python = "==3.12.*"
 dependencies = [
+    "google-genai>=2.31.0",
     "gradio>=5",
     "numpy>=2",
     "onnxruntime>=1.23,<1.24",
