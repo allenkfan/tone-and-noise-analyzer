@@ -200,6 +200,8 @@ def test_overlap_stats_bridge_flicker_and_measure_the_longest_run():
     ratio, longest = acoustic.overlap_stats(speech, overlap)
     assert longest == pytest.approx(120 * acoustic.SEG_FRAME / SR)
     assert ratio == pytest.approx(130 / 1000)
+    speech[:150] = 0  # bridged or not, overlap only counts where someone is talking
+    assert acoustic.overlap_stats(speech, overlap)[0] == pytest.approx(80 / 850)
 
 
 def test_merge_keeps_noise_type_consistent_with_presence():
