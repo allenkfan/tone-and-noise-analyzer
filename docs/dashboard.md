@@ -9,7 +9,7 @@ The dashboard takes a batch of call recordings plus a CSV manifest and returns o
 
 Both dashboards run the full model: local acoustic and overlap models plus the Gemini audio judge at temperature 0. The submission dashboard is frozen at release `v1.1` (build `fca3129`). It is the system submitted for evaluation.
 
-The experimental dashboard runs `v1.1-speech-emotion` (tag and branch `ser`, build `57eeafc`), with the same login. It adds a local speech-emotion model (WavLM arousal and valence) that scores the customer's turns, fused with the Gemini judge. It was tested but **not selected**: on the three example calls it matched v1.1 on tone (0/3) and didn't improve intensity, at about 6× the latency and about 1.6× the Gemini cost. It's offered for comparison only. See the technical memo's follow-ups.
+The experimental dashboard runs `v1.1-speech-emotion` (same login). It was tested but not selected, and it's offered for comparison only. See [Experimental alternative](#experimental-alternative) at the end of this guide.
 
 ## 1. Sign in
 
@@ -115,3 +115,23 @@ After a run, the uploaded audio is deleted from the server and the upload boxes 
 ## Scripted use
 
 The dashboard can also be driven from Python with `gradio_client`. This is useful for repeatable tests. See "Smoke test against a live Space" in [development.md](development.md).
+
+## Experimental alternative
+
+https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space runs `v1.1-speech-emotion` (tag and branch `ser`, build `57eeafc`), with the same login. It adds a local speech-emotion model (WavLM arousal and valence) that scores the customer's turns, and fuses its output with the Gemini judge. It's frozen for the evaluation period. **The submitted system is v1.1.** The alternative is offered for comparison only. See the technical memo's follow-up 1.
+
+| | v1.1 (submitted) | v1.1-speech-emotion |
+| --- | --- | --- |
+| Tone on the acted-speech test set (CREMA-D, held out) | about 0.38 accuracy / 0.33 macro-F1 | **0.53 / 0.49** |
+| Tone on the 3 real calls | 0/3 | 0/3 |
+| Intensity on the 3 real calls | 1/3 | 0/3, then 1/3 |
+| Total cost | **about $0.0008 per audio minute** | about $0.0015 per audio minute (both under $0.003) |
+| Speed (2 vCPU) | **5–6 s per audio minute** | 33–36 s per audio minute |
+| Setup | **lighter image** | adds PyTorch and a 1.2 GB model |
+
+**What it means**
+
+- **Accuracy:** on the only sizable test, the alternative is clearly better at tone, about 15 points. That test is acted, clean, single-speaker speech, and its decision thresholds were fitted on the same dataset. On real calls the two are tied, but three calls can't tell them apart either way.
+- **Cost and speed:** v1.1 is clearly better. Both are under the cost limit, and both are fast enough for batch processing.
+- **The open question** is whether the acted-speech gain carries over to real phone calls. Tone is the largest part of the hidden-set score, so the question matters. There's no evidence yet either way.
+- **Why v1.1 was submitted:** it's cheaper, faster and simpler, and the alternative's advantage hasn't been shown on real calls.
