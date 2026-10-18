@@ -142,12 +142,14 @@ This is the same image the Space builds. A Space build takes minutes and its log
 
 ### The Spaces
 
-Both Spaces were created on 2026-10-16. They are public Docker Spaces on CPU Basic, and both have the secrets `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` (values in `private/.env`). Evaluators can't reach a private Space, and the app's own login protects the public one.
+Hardware history: both ran on CPU Upgrade (8 vCPU, $0.03/hr, never sleeping) from the 2026-10-16 deadline until the Hugging Face credit ran out. Since 2026-10-18 both are back on free CPU Basic (2 vCPU). Free Docker Spaces still need the PRO subscription, so cancelling PRO takes both dashboards down. CPU Basic Spaces sleep after 48 hours without visitors. The `Keep dashboards awake` GitHub Action (`.github/workflows/keep-awake.yml`) opens both URLs twice a day to prevent that. A failed run means a dashboard didn't answer, and GitHub emails the repo owner.
+
+Both Spaces were created on 2026-10-16. They are public Docker Spaces, and both have the secrets `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` (values in `private/.env`). Evaluators can't reach a private Space, and the app's own login protects the public one.
 
 | Space | Purpose | App URL |
 | --- | --- | --- |
-| [tone-and-noise-analyzer-dev](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev) | staging; **frozen during evaluation** as the experimental alternative `v1.1-speech-emotion` (`57eeafc`, CPU Upgrade, never sleeps). Use a new staging Space until evaluation ends | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space |
-| [tone-and-noise-analyzer](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer) | the URL you submit; release `v1.1` (build `fca3129`) on CPU Upgrade, never sleeps, Gemini key set | https://allen-videolytics-tone-and-noise-analyzer.hf.space |
+| [tone-and-noise-analyzer-dev](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer-dev) | staging; **frozen during evaluation** as the experimental alternative `v1.1-speech-emotion` (`57eeafc`, CPU Basic). Use a new staging Space until evaluation ends | https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space |
+| [tone-and-noise-analyzer](https://huggingface.co/spaces/allen-videolytics/tone-and-noise-analyzer) | the URL you submit; release `v1.1` (build `fca3129`) on CPU Basic, Gemini key set | https://allen-videolytics-tone-and-noise-analyzer.hf.space |
 
 The YAML front matter at the top of `README.md` is the Space configuration (`sdk: docker`, `app_port: 7860`). GitHub shows it as a small table. To change a secret, use the Space's **Settings → Variables and secrets** page, or `HfApi().add_space_secret(repo_id, key, value)`. Changing a secret restarts the Space.
 

@@ -1,0 +1,32 @@
+# Free (CPU Basic) Spaces go to sleep after 48 hours without visitors. Opening both dashboards
+# twice a day keeps them awake for evaluators. A failed run means a dashboard didn't answer;
+# GitHub emails the repo owner about failed scheduled runs.
+name: Keep dashboards awake
+
+on:
+  schedule:
+    - cron: "17 3,15 * * *"   # 03:17 and 15:17 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        url:
+          - https://allen-videolytics-tone-and-noise-analyzer.hf.space
+          - https://allen-videolytics-tone-and-noise-analyzer-dev.hf.space
+    steps:
+      - name: Open ${{ matrix.url }}
+        run: |
+          # A sleeping Space takes a minute or two to wake, so retry for up to ~10 minutes.
+          for attempt in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "${{ matrix.url }}/" || echo 000)
+            echo "attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::${{ matrix.url }} did not answer with HTTP 200"
+          exit 1
